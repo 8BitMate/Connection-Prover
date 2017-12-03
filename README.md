@@ -16,8 +16,8 @@ either dnf or dcf, followed by a path to a file with the proof you want to check
 
 ## File format
 
-The file format is: fof(<name>, conjecture, <formula>). Where <name> is the name
-of the formula, and formula is the formula you want to check.
+The file format is: fof(\<name\>, conjecture, \<formula\>). Where \<name\> is
+the name of the formula, and formula is the formula you want to check.
 
 propositional variables are strings consisting of any letters or numbers, or the
 character '_'  And expressions are on the form: f1 & f2, or expressions are on
