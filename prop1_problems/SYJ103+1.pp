@@ -1,0 +1,1 @@
+fof(con, conjecture, ~ (~ (a & b) & ~ ~ (b & a))).

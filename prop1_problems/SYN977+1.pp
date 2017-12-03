@@ -1,0 +1,1 @@
+fof(prove_this, conjecture, ~ (~ (~ (a & ~ b) & ~ (b & ~ a)) & ~ ~ (~ a & ~ b))).

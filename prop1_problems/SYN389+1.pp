@@ -1,0 +1,1 @@
+fof(pel8, conjecture, ~ (~ (~ (p & ~ q) & ~ p) & ~ p)).

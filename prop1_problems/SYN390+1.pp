@@ -1,0 +1,1 @@
+fof(pel11, conjecture, ~ (p & ~ p) & ~ (p & ~ p)).
