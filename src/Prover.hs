@@ -5,17 +5,20 @@ import Data.Map (Map (..))
 import qualified Data.Map as M
 import Data.Set (Set (..))
 import qualified Data.Set as S
-import Data.List (sortOn)
+import Data.List (sortOn, intercalate)
 import Control.Monad.State.Strict
 import Data.Foldable
 -- |
 -- This is a connection logic prover
 
 data Formula a = Atom a
+             | Pred a [a]
              | Not (Formula a)
              | Formula a `And` Formula a
              | Formula a `Or` Formula a
-             | Formula a `Implies` Formula a deriving Eq --Not needed, but why not
+             | Formula a `Implies` Formula a
+             | Forall a (Formula a)
+             | Exists a (Formula a) deriving Eq
 
 data Atomic a = Atomic a | Negated a deriving (Eq, Ord)
 
@@ -23,10 +26,13 @@ data Proof = Valid | Invalid deriving (Eq, Show)
 
 instance (Show a) => Show (Formula a) where
     show (Atom p) = show p
+    show (Pred p vars) = show p ++ "(" ++ intercalate ", " (map show vars) ++ ")"
     show (Not f) = "~ " ++ show f
     show (f1 `And` f2) = "(" ++ show f1 ++ " & " ++ show f2 ++ ")"
     show (f1 `Or` f2) = "(" ++ show f1 ++ " | " ++ show f2 ++ ")"
     show (f1 `Implies` f2) = "(" ++ show f1 ++ " -> " ++ show f2 ++ ")"
+    show (Forall var f) = "![" ++ show var ++ "]: " ++ show f
+    show (Exists var f) = "?[" ++ show var ++ "]: " ++ show f
 
 instance (Show a) => Show (Atomic a) where
     show (Atomic p) = show p
@@ -35,10 +41,15 @@ instance (Show a) => Show (Atomic a) where
 -- to negation normal form
 nnf :: Formula a -> Formula a
 nnf (Atom p) = Atom p
+nnf (Pred p vars) = Pred p vars
+nnf (Forall var f) = Forall var (nnf f)
+nnf (Exists var f) = Exists var (nnf f)
 nnf (f1 `And` f2) = nnf f1 `And` nnf f2
 nnf (f1 `Or` f2) = nnf f1 `Or` nnf f2
 nnf (f1 `Implies` f2) = nnf (Not f1) `Or` nnf f2
 nnf (Not (Not f)) = nnf f
+nnf (Not (Forall var f)) = Exists var (nnf (Not f))
+nnf (Not (Exists var f)) = Forall var (nnf (Not f))
 nnf (Not (f1 `And` f2)) = nnf (Not f1) `Or` nnf (Not f2)
 nnf (Not (f1 `Or` f2)) = nnf (Not f1) `And` nnf (Not f2)
 nnf (Not (f1 `Implies` f2)) = nnf f1 `And` nnf (Not f2)
