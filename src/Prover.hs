@@ -177,39 +177,39 @@ dnf (f1 `Or` f2) = dnf f1 `Or` dnf f2
 connectionClauses :: Ord a => Formula a -> [Set (Atomic a)]
 connectionClauses f = sortOn length . rmdups . evalState (finally f) $ (Just S.empty)
     where
-        go :: Ord a => Formula a -> State (Maybe (Set (Atomic a))) [Set (Atomic a)]
+        go :: Ord a => Formula a -> State (Maybe (Set (Atomic a))) ([Set (Atomic a)] -> [Set (Atomic a)])
         go (Atom p) = do
             maybeSet <- get
             case maybeSet of
-                Nothing -> return []
+                Nothing -> return id
                 Just set ->
-                    if S.member (Negated p) set then put Nothing >> return []
-                    else modify' (fmap (S.insert (Atomic p))) >> return []
+                    if S.member (Negated p) set then put Nothing >> return id
+                    else modify' (fmap (S.insert (Atomic p))) >> return id
 
         go (Not (Atom p)) = do
             maybeSet <- get
             case maybeSet of
-                Nothing -> return []
+                Nothing -> return id
                 Just set ->
-                    if S.member (Atomic p) set then put Nothing >> return []
-                    else modify' (fmap (S.insert (Negated p))) >> return []
+                    if S.member (Atomic p) set then put Nothing >> return id
+                    else modify' (fmap (S.insert (Negated p))) >> return id
 
         go (f1 `And` f2) = do
             go f2 >> go f1
 
         go (f1 `Or` f2) = do
             put (Just S.empty)
-            sets2 <- go f2 -- Evaluate in reverse order to minimize concatenation time
+            sets2 <- go f2
             maybeSet2 <- get
-            let set2 = maybe [] return maybeSet2
+            let set2 = maybe id (\set -> (set:)) maybeSet2
 
             put (Just S.empty)
             sets1 <- go f1
             maybeSet1 <- get
-            let set1 = maybe [] return maybeSet1
+            let set1 = maybe id (\set -> (set:)) maybeSet1
 
             put Nothing
-            return (set1 ++ sets1 ++ set2 ++ sets2)
+            return (set1 . sets1 . set2 . sets2)
 
         go _ = error "Not in disjunctive normal form"
 
@@ -217,7 +217,7 @@ connectionClauses f = sortOn length . rmdups . evalState (finally f) $ (Just S.e
         finally formula = do
             sets <- go formula
             maybeSet <- get
-            return $ maybe sets (\set -> set:sets) maybeSet
+            return $ maybe sets (\set -> (set:) . sets) maybeSet $ []
 
 -- remove duplicate elements
 -- essentially the same function as Nikita Volkov's answer on stack overflow
