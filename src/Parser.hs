@@ -32,26 +32,24 @@ prefix name f = Prefix $ foldr1 (.) <$> some (f <$ symbol name)
 exists :: Parser (Formula Text)
 exists = do
     symbol "?"
-    var <- brackets word
+    v <- brackets var
     symbol ":"
     formula <- (lookAhead (symbol "~") >> expr) <|> term
-    return $ Exists var formula
+    return $ Exists v formula
 
 forall :: Parser (Formula Text)
 forall = do
     symbol "!"
-    var <- brackets word
+    v <- brackets var
     symbol ":"
     formula <- (lookAhead (symbol "~") >> expr) <|> term
-    return $ Forall var formula
+    return $ Forall v formula
 
 predicate :: Parser (Formula Text)
 predicate = do
-    p <- word
-    vars <- option [] (parens $ sepBy1 word comma)
-    case vars of
-        [] -> return $ Atom p
-        _ ->  return $ Pred p vars
+    p <- prop
+    vars <- parens $ sepBy var comma
+    return $ Pred p $ map Left vars
 
 lexeme :: Parser a -> Parser a
 lexeme = L.lexeme space
@@ -81,6 +79,24 @@ comma = symbol ","
 
 word :: Parser Text
 word = fmap T.pack $ lexeme . some $ (alphaNumChar <|> char '_')
+
+prop :: Parser Text
+prop = fmap T.pack $ lexeme $ do
+    c <- lowerChar
+    cs <- (many $ alphaNumChar <|> char '_')
+    return (c:cs)
+
+func :: Parser (Func Text)
+func = lexeme $ do
+    name <- prop
+    vars <- parens $ sepBy var comma
+    return $ Func name vars
+
+var :: Parser (Var Text)
+var = (fmap . fmap) T.pack $ lexeme $ do
+    c <- upperChar
+    cs <- (many $ alphaNumChar <|> char '_')
+    return $ Var (c:cs)
 
 fof :: Parser Text --Start of input file
 fof = symbol "fof"

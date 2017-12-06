@@ -1,3 +1,5 @@
+{-# LANGUAGE LambdaCase, DeriveFunctor #-}
+
 module Prover where
 
 import Prelude hiding (lookup)
@@ -11,22 +13,28 @@ import Data.Foldable
 -- |
 -- This is a connection logic prover
 
-data Formula a = Atom a
-             | Pred a [a]
+-- I treat a funtion with no variables as a constant, and a predicate with no
+-- variables as an atomic formula
+newtype Var a = Var a deriving (Eq, Functor)
+-- For simplisity, a function can only have variables as arguments and not other
+-- functions. Functions are only used in the proof-search anyway, and is not
+-- permitted in the formula as input.
+data Func a = Func a [Var a] deriving (Eq, Functor)
+
+data Formula a = Pred a [Either (Var a) (Func a)]
              | Not (Formula a)
              | Formula a `And` Formula a
              | Formula a `Or` Formula a
              | Formula a `Implies` Formula a
-             | Forall a (Formula a)
-             | Exists a (Formula a) deriving Eq
-
-data Atomic a = Atomic a | Negated a deriving (Eq, Ord)
+             | Forall (Var a) (Formula a)
+             | Exists (Var a) (Formula a) deriving Eq
 
 data Proof = Valid | Invalid deriving (Eq, Show)
 
 instance (Show a) => Show (Formula a) where
-    show (Atom p) = show p
-    show (Pred p vars) = show p ++ "(" ++ intercalate ", " (map show vars) ++ ")"
+    show (Pred p []) = show p
+    show (Pred p vars) = show p ++ "(" ++ intercalate ", "
+        (map (\case (Left x) -> show x; (Right x) -> show x) vars) ++ ")"
     show (Not f) = "~ " ++ show f
     show (f1 `And` f2) = "(" ++ show f1 ++ " & " ++ show f2 ++ ")"
     show (f1 `Or` f2) = "(" ++ show f1 ++ " | " ++ show f2 ++ ")"
@@ -34,13 +42,15 @@ instance (Show a) => Show (Formula a) where
     show (Forall var f) = "![" ++ show var ++ "]: " ++ show f
     show (Exists var f) = "?[" ++ show var ++ "]: " ++ show f
 
-instance (Show a) => Show (Atomic a) where
-    show (Atomic p) = show p
-    show (Negated p) = "~ " ++ show p
+instance (Show a) => Show (Var a) where
+    show (Var x) = show x
+
+instance (Show a) => Show (Func a) where
+    show (Func f []) = show f
+    show (Func f ls) = show f ++ show "(" ++ intercalate ", " (map show ls) ++ show ")"
 
 -- to negation normal form
 nnf :: Formula a -> Formula a
-nnf (Atom p) = Atom p
 nnf (Pred p vars) = Pred p vars
 nnf (Forall var f) = Forall var (nnf f)
 nnf (Exists var f) = Exists var (nnf f)
@@ -55,6 +65,8 @@ nnf (Not (f1 `Or` f2)) = nnf (Not f1) `And` nnf (Not f2)
 nnf (Not (f1 `Implies` f2)) = nnf f1 `And` nnf (Not f2)
 nnf (Not f) = Not (nnf f)
 
+test = "![X]: (p(X) & b & (![X]: q(X)) & q(X))"
+{-
 -- Converts the variables in the formula to Int values
 -- This is convenient later, when I run the DCF-translation algorithm
 -- Since I have to generate new unused variables on the fly
@@ -185,24 +197,24 @@ dnf (f1 `Or` f2) = dnf f1 `Or` dnf f2
 -- eliminating all clauses countaining p and ~p for all predicates p. If all
 -- clauses are of the form mentioned above, the resulting value is [], since the
 -- formula is unsatisfiable; otherwise the return value is a normal list.
-connectionClauses :: Ord a => Formula a -> [Set (Atomic a)]
+connectionClauses :: Ord a => Formula a -> [Set (Atomic' a)]
 connectionClauses f = sortOn length . rmdups . evalState (finally f) $ (Just S.empty)
     where
-        go :: Ord a => Formula a -> State (Maybe (Set (Atomic a))) [Set (Atomic a)]
+        go :: Ord a => Formula a -> State (Maybe (Set (Atomic' a))) [Set (Atomic' a)]
         go (Atom p) = do
             maybeSet <- get
             case maybeSet of
                 Nothing -> return []
                 Just set ->
                     if S.member (Negated p) set then put Nothing >> return []
-                    else modify' (fmap (S.insert (Atomic p))) >> return []
+                    else modify' (fmap (S.insert (Atomic' p))) >> return []
 
         go (Not (Atom p)) = do
             maybeSet <- get
             case maybeSet of
                 Nothing -> return []
                 Just set ->
-                    if S.member (Atomic p) set then put Nothing >> return []
+                    if S.member (Atomic' p) set then put Nothing >> return []
                     else modify' (fmap (S.insert (Negated p))) >> return []
 
         go (f1 `And` f2) = do
@@ -224,7 +236,7 @@ connectionClauses f = sortOn length . rmdups . evalState (finally f) $ (Just S.e
 
         go _ = error "Not in disjunctive normal form"
 
-        finally :: Ord a => Formula a -> State (Maybe (Set (Atomic a))) [Set (Atomic a)]
+        finally :: Ord a => Formula a -> State (Maybe (Set (Atomic' a))) [Set (Atomic' a)]
         finally formula = do
             sets <- go formula
             maybeSet <- get
@@ -269,12 +281,12 @@ anyM f = go f . toList
             bool <- f x
             if bool then return True else anyM f xs
 
-prove :: Ord a => [Set (Atomic a)] -> Proof
+prove :: Ord a => [Set (Atomic' a)] -> Proof
 prove formulas = if start (splitViews formulas) S.empty == True then Valid else Invalid
     where
         -- The formula is valid if it can prove the formula is valid starting
         -- from eny clause
-        start :: Ord a => [(Set (Atomic a), [Set (Atomic a)])] -> Set (Atomic a) -> Bool
+        start :: Ord a => [(Set (Atomic' a), [Set (Atomic' a)])] -> Set (Atomic' a) -> Bool
         start formulaMatrixPair path = any (\(clause, matrix) ->
             solve clause path matrix) $ formulaMatrixPair
 
@@ -283,20 +295,20 @@ prove formulas = if start (splitViews formulas) S.empty == True then Valid else 
             in  all (\atom -> closeBranch atom path newMatrix) clause
 
         -- If the compliment of p exists in the path, then we can close that branch
-        reductionRule (Atomic p) = S.member (Negated p)
-        reductionRule (Negated p) = S.member (Atomic p)
+        reductionRule (Atomic' p) = S.member (Negated p)
+        reductionRule (Negated p) = S.member (Atomic' p)
 
         -- remove clauses which contains atoms that exists in the current clause
-        pruneMatrix :: Ord a => [Set (Atomic a)] -> Set (Atomic a) -> [Set (Atomic a)]
+        pruneMatrix :: Ord a => [Set (Atomic' a)] -> Set (Atomic' a) -> [Set (Atomic' a)]
         pruneMatrix = foldr (\atom -> filter (S.notMember atom))
 
         -- find all clauses that clashes with p, meaning, all clauses that
         -- contain the compliment of p. Returns a list of pairs containing
         -- whith a clashing clause, and all other unvisited clauses.
-        findClashingClauses (Atomic p) = filter (\(set, _) ->
+        findClashingClauses (Atomic' p) = filter (\(set, _) ->
             S.member (Negated p) set) . splitViews
         findClashingClauses (Negated p) = filter (\(set, _) ->
-            S.member (Atomic p) set) . splitViews
+            S.member (Atomic' p) set) . splitViews
 
         -- Returns true if it can close any branch starting starting from atom
         findPath atom path =
@@ -307,3 +319,4 @@ prove formulas = if start (splitViews formulas) S.empty == True then Valid else 
         -- A branch can be closed if it can apply the reduction rule, or find
         -- a path that closes the formula
         closeBranch atom path matrix = reductionRule atom path || findPath atom path matrix
+-}
