@@ -48,8 +48,8 @@ forall = do
 predicate :: Parser (Formula Text)
 predicate = do
     p <- prop
-    vars <- parens $ sepBy var comma
-    return $ Pred p $ map Left vars
+    vars <- parens $ sepBy funcVar comma
+    return $ Pred p $ vars
 
 lexeme :: Parser a -> Parser a
 lexeme = L.lexeme space
@@ -89,7 +89,7 @@ prop = fmap T.pack $ lexeme $ do
 func :: Parser (Func Text)
 func = lexeme $ do
     name <- prop
-    vars <- parens $ sepBy var comma
+    vars <- parens $ sepBy funcVar comma
     return $ Func name vars
 
 var :: Parser (Var Text)
@@ -97,6 +97,9 @@ var = (fmap . fmap) T.pack $ lexeme $ do
     c <- upperChar
     cs <- (many $ alphaNumChar <|> char '_')
     return $ Var (c:cs)
+
+funcVar :: Parser (Either (Var Text) (Func Text))
+funcVar = lexeme $ try $ fmap Left var <|> fmap Right func
 
 fof :: Parser Text --Start of input file
 fof = symbol "fof"

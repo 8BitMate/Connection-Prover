@@ -11,15 +11,12 @@ import Data.List (sortOn, intercalate)
 import Control.Monad.State.Strict
 import Data.Foldable
 -- |
--- This is a connection logic prover
+-- This is a connection logic prover for first order logic
 
 -- I treat a funtion with no variables as a constant, and a predicate with no
 -- variables as an atomic formula
-newtype Var a = Var a deriving (Eq, Functor)
--- For simplisity, a function can only have variables as arguments and not other
--- functions. Functions are only used in the proof-search anyway, and is not
--- permitted in the formula as input.
-data Func a = Func a [Var a] deriving (Eq, Functor)
+newtype Var a = Var a deriving (Eq, Ord, Functor)
+data Func a = Func a [Either (Var a) (Func a)] deriving Eq
 
 data Formula a = Pred a [Either (Var a) (Func a)]
              | Not (Formula a)
@@ -33,8 +30,8 @@ data Proof = Valid | Invalid deriving (Eq, Show)
 
 instance (Show a) => Show (Formula a) where
     show (Pred p []) = show p
-    show (Pred p vars) = show p ++ "(" ++ intercalate ", "
-        (map (\case (Left x) -> show x; (Right x) -> show x) vars) ++ ")"
+    show (Pred p ls) = show p ++ "(" ++ intercalate ", "
+        (map (\case (Left x) -> show x; (Right x) -> show x) ls) ++ ")"
     show (Not f) = "~ " ++ show f
     show (f1 `And` f2) = "(" ++ show f1 ++ " & " ++ show f2 ++ ")"
     show (f1 `Or` f2) = "(" ++ show f1 ++ " | " ++ show f2 ++ ")"
@@ -47,7 +44,8 @@ instance (Show a) => Show (Var a) where
 
 instance (Show a) => Show (Func a) where
     show (Func f []) = show f
-    show (Func f ls) = show f ++ show "(" ++ intercalate ", " (map show ls) ++ show ")"
+    show (Func f ls) = show f ++ show "(" ++ intercalate ", "
+        (map (\case (Left x) -> show x; (Right x) -> show x) ls) ++ ")"
 
 -- to negation normal form
 nnf :: Formula a -> Formula a
@@ -66,34 +64,69 @@ nnf (Not (f1 `Implies` f2)) = nnf f1 `And` nnf (Not f2)
 nnf (Not f) = Not (nnf f)
 
 test = "![X]: (p(X) & b & (![X]: q(X)) & q(X))"
-{-
--- Converts the variables in the formula to Int values
--- This is convenient later, when I run the DCF-translation algorithm
--- Since I have to generate new unused variables on the fly
-mapInts :: Ord a => Formula a -> Formula Int
-mapInts f = evalState (go f) (0, M.empty)
-    where
-        go :: Ord a => Formula a -> State (Int, Map a Int) (Formula Int)
-        go (Atom p) = do
-           (var, table) <- get
-           case M.lookup p table of
-                Nothing -> do put (var + 1, M.insert p var table)
-                              return $ Atom var
-                Just var -> return $ Atom var
-        go (Not f1) = do f1' <- go f1; return $ Not f1'
-        go (f1 `And` f2) = do
-            f1' <- go f1
-            f2' <- go f2
-            return (f1' `And` f2')
-        go (f1 `Or` f2) = do
-            f1' <- go f1
-            f2' <- go f2
-            return (f1' `Or` f2')
-        go (f1 `Implies` f2) = do
-            f1' <- go f1
-            f2' <- go f2
-            return (f1' `Implies` f2')
 
+-- Converts the predicates, functions on variables to int values.
+-- All variables bound to a quantifier is given a unique number, even if the
+-- same variable is used elsewhere. For example:
+-- ![X]: ?[Y]: p(X,Y) & ?[Y] p(Y,X) will be converted to:
+-- ![0]: ?[1]: p(0,1) & ?[2] p(2,0)
+mapInts :: Ord a => Formula a -> Formula Int
+mapInts f = evalState (go M.empty f) (0, M.empty, M.empty)
+    where
+        go :: Ord a => Map (Var a) Int -> Formula a -> State (Int, Map a Int, Map a Int) (Formula Int)
+        go vars (Pred p xs) = do
+           (varNum, preds, funcs) <- get
+           case M.lookup p preds of
+                Nothing -> do put (varNum + 1, M.insert p varNum preds, funcs)
+                              xs' <- mapM (replaceVarOrFunc vars) xs
+                              return $ Pred varNum xs'
+                Just n -> do xs' <- mapM (replaceVarOrFunc vars) xs
+                             return $ Pred n xs'
+        go vars (Not f1) = do f1' <- go vars f1; return $ Not f1'
+        go vars (f1 `And` f2) = do
+            f1' <- go vars f1
+            f2' <- go vars f2
+            return (f1' `And` f2')
+        go vars (f1 `Or` f2) = do
+            f1' <- go vars f1
+            f2' <- go vars f2
+            return (f1' `Or` f2')
+        go vars (f1 `Implies` f2) = do
+            f1' <- go vars f1
+            f2' <- go vars f2
+            return (f1' `Implies` f2')
+        go vars (Forall var f) = do
+            varNum <- newVarNum
+            f' <- go (M.insert var varNum vars) f
+            return $ Forall (Var varNum) f'
+        go vars (Exists var f) = do
+            varNum <- newVarNum
+            f' <- go (M.insert var varNum vars) f
+            return $ Exists (Var varNum) f'
+
+        replaceVarOrFunc :: Ord a => Map (Var a) Int
+                                  -> Either (Var a) (Func a)
+                                  -> State (Int, Map a Int, Map a Int) (Either (Var Int) (Func Int))
+        replaceVarOrFunc vars (Left var) = return $ case M.lookup var vars of
+            Nothing -> error "Formula contains free variables"
+            Just n -> Left (Var n)
+        replaceVarOrFunc vars (Right (Func name xs)) = do
+            (varNum, preds, funcs) <- get
+            case M.lookup name preds of
+                Nothing -> do
+                    put (varNum + 1, preds, M.insert name varNum funcs)
+                    xs' <- mapM (replaceVarOrFunc vars) xs
+                    return $ Right (Func varNum xs')
+                Just n -> do
+                    xs' <- mapM (replaceVarOrFunc vars) xs
+                    return $ Right (Func n xs')
+
+        newVarNum :: Ord a => State (Int, Map a Int, Map a Int) Int
+        newVarNum = do
+            (varNum, preds, funcs) <- get
+            put (varNum + 1, preds, funcs)
+            return varNum
+{-
 findMaxInt :: Formula Int -> Int
 findMaxInt (Atom n) = n
 findMaxInt (Not (Atom n)) = n
@@ -197,50 +230,50 @@ dnf (f1 `Or` f2) = dnf f1 `Or` dnf f2
 -- eliminating all clauses countaining p and ~p for all predicates p. If all
 -- clauses are of the form mentioned above, the resulting value is [], since the
 -- formula is unsatisfiable; otherwise the return value is a normal list.
-connectionClauses :: Ord a => Formula a -> [Set (Atomic' a)]
+connectionClauses :: Ord a => Formula a -> [Set (Atomic a)]
 connectionClauses f = sortOn length . rmdups . evalState (finally f) $ (Just S.empty)
     where
-        go :: Ord a => Formula a -> State (Maybe (Set (Atomic' a))) [Set (Atomic' a)]
+        go :: Ord a => Formula a -> State (Maybe (Set (Atomic a))) ([Set (Atomic a)] -> [Set (Atomic a)])
         go (Atom p) = do
             maybeSet <- get
             case maybeSet of
-                Nothing -> return []
+                Nothing -> return id
                 Just set ->
-                    if S.member (Negated p) set then put Nothing >> return []
-                    else modify' (fmap (S.insert (Atomic' p))) >> return []
+                    if S.member (Negated p) set then put Nothing >> return id
+                    else modify' (fmap (S.insert (Atomic p))) >> return id
 
         go (Not (Atom p)) = do
             maybeSet <- get
             case maybeSet of
-                Nothing -> return []
+                Nothing -> return id
                 Just set ->
-                    if S.member (Atomic' p) set then put Nothing >> return []
-                    else modify' (fmap (S.insert (Negated p))) >> return []
+                    if S.member (Atomic p) set then put Nothing >> return id
+                    else modify' (fmap (S.insert (Negated p))) >> return id
 
         go (f1 `And` f2) = do
             go f2 >> go f1
 
         go (f1 `Or` f2) = do
             put (Just S.empty)
-            sets2 <- go f2 -- Evaluate in reverse order to minimize concatenation time
+            sets2 <- go f2
             maybeSet2 <- get
-            let set2 = maybe [] return maybeSet2
+            let set2 = maybe id (\set -> (set:)) maybeSet2
 
             put (Just S.empty)
             sets1 <- go f1
             maybeSet1 <- get
-            let set1 = maybe [] return maybeSet1
+            let set1 = maybe id (\set -> (set:)) maybeSet1
 
             put Nothing
-            return (set1 ++ sets1 ++ set2 ++ sets2)
+            return (set1 . sets1 . set2 . sets2)
 
         go _ = error "Not in disjunctive normal form"
 
-        finally :: Ord a => Formula a -> State (Maybe (Set (Atomic' a))) [Set (Atomic' a)]
+        finally :: Ord a => Formula a -> State (Maybe (Set (Atomic a))) [Set (Atomic a)]
         finally formula = do
             sets <- go formula
             maybeSet <- get
-            return $ maybe sets (\set -> set:sets) maybeSet
+            return $ maybe sets (\set -> (set:) . sets) maybeSet $ []
 
 -- remove duplicate elements
 -- essentially the same function as Nikita Volkov's answer on stack overflow
