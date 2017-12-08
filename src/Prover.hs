@@ -10,21 +10,25 @@ import qualified Data.Set as S
 import Data.List (sortOn, intercalate)
 import Control.Monad.State.Strict
 import Data.Foldable
+import Control.Exception
 -- |
 -- This is a connection logic prover for first order logic
 
 -- I treat a funtion with no variables as a constant, and a predicate with no
 -- variables as an atomic formula
 newtype Var a = Var a deriving (Eq, Ord, Functor)
-data Func a = Func a [Either (Var a) (Func a)] deriving Eq
+data Func a = Func a [Either (Var a) (Func a)] deriving (Eq, Ord)
 
 data Formula a = Pred a [Either (Var a) (Func a)]
-             | Not (Formula a)
-             | Formula a `And` Formula a
-             | Formula a `Or` Formula a
-             | Formula a `Implies` Formula a
-             | Forall (Var a) (Formula a)
-             | Exists (Var a) (Formula a) deriving Eq
+               | Not (Formula a)
+               | Formula a `And` Formula a
+               | Formula a `Or` Formula a
+               | Formula a `Implies` Formula a
+               | Forall (Var a) (Formula a)
+               | Exists (Var a) (Formula a) deriving Eq
+
+data Atomic a = Predicate a [Either (Var a) (Func a)]
+              | Negated a [Either (Var a) (Func a)]
 
 data Proof = Valid | Invalid deriving (Eq, Show)
 
@@ -44,7 +48,7 @@ instance (Show a) => Show (Var a) where
 
 instance (Show a) => Show (Func a) where
     show (Func f []) = show f
-    show (Func f ls) = show f ++ show "(" ++ intercalate ", "
+    show (Func f ls) = show f ++ "(" ++ intercalate ", "
         (map (\case (Left x) -> show x; (Right x) -> show x) ls) ++ ")"
 
 -- to negation normal form
@@ -63,38 +67,27 @@ nnf (Not (f1 `Or` f2)) = nnf (Not f1) `And` nnf (Not f2)
 nnf (Not (f1 `Implies` f2)) = nnf f1 `And` nnf (Not f2)
 nnf (Not f) = Not (nnf f)
 
-test = "![X]: (p(X) & b & (![X]: q(X)) & q(X))"
-
 -- Converts the predicates, functions on variables to int values.
 -- All variables bound to a quantifier is given a unique number, even if the
 -- same variable is used elsewhere. For example:
--- ![X]: ?[Y]: p(X,Y) & ?[Y] p(Y,X) will be converted to:
--- ![0]: ?[1]: p(0,1) & ?[2] p(2,0)
+-- ![X]: (?[Y]: p(X,Y) & ?[Y]: p(Y,X)) will be converted to:
+-- ![0]: (?[1]: 2(0,1) & ?[3]: 2(3,0))
 mapInts :: Ord a => Formula a -> Formula Int
-mapInts f = evalState (go M.empty f) (0, M.empty, M.empty)
+mapInts f = evalState (go M.empty f) (0, M.empty)
     where
-        go :: Ord a => Map (Var a) Int -> Formula a -> State (Int, Map a Int, Map a Int) (Formula Int)
+        go :: Ord a => Map (Var a) Int -> Formula a -> State (Int, Map a Int) (Formula Int)
         go vars (Pred p xs) = do
-           (varNum, preds, funcs) <- get
+           (varNum, preds) <- get
            case M.lookup p preds of
-                Nothing -> do put (varNum + 1, M.insert p varNum preds, funcs)
+                Nothing -> do put (varNum + 1, M.insert p varNum preds)
                               xs' <- mapM (replaceVarOrFunc vars) xs
                               return $ Pred varNum xs'
                 Just n -> do xs' <- mapM (replaceVarOrFunc vars) xs
                              return $ Pred n xs'
-        go vars (Not f1) = do f1' <- go vars f1; return $ Not f1'
-        go vars (f1 `And` f2) = do
-            f1' <- go vars f1
-            f2' <- go vars f2
-            return (f1' `And` f2')
-        go vars (f1 `Or` f2) = do
-            f1' <- go vars f1
-            f2' <- go vars f2
-            return (f1' `Or` f2')
-        go vars (f1 `Implies` f2) = do
-            f1' <- go vars f1
-            f2' <- go vars f2
-            return (f1' `Implies` f2')
+        go vars (Not f) = Not <$> go vars f
+        go vars (f1 `And` f2) = liftM2 And (go vars f1) (go vars f2)
+        go vars (f1 `Or` f2) = liftM2 Or (go vars f1) (go vars f2)
+        go vars (f1 `Implies` f2) = liftM2 Implies (go vars f1) (go vars f2)
         go vars (Forall var f) = do
             varNum <- newVarNum
             f' <- go (M.insert var varNum vars) f
@@ -106,34 +99,166 @@ mapInts f = evalState (go M.empty f) (0, M.empty, M.empty)
 
         replaceVarOrFunc :: Ord a => Map (Var a) Int
                                   -> Either (Var a) (Func a)
-                                  -> State (Int, Map a Int, Map a Int) (Either (Var Int) (Func Int))
-        replaceVarOrFunc vars (Left var) = return $ case M.lookup var vars of
-            Nothing -> error "Formula contains free variables"
-            Just n -> Left (Var n)
+                                  -> State (Int, Map a Int) (Either (Var Int) (Func Int))
+        replaceVarOrFunc vars (Left var) =
+            return $ case M.lookup var vars of
+                Nothing -> throw $! PatternMatchFail "Formula contains free variables!"
+                Just n -> Left (Var n)
         replaceVarOrFunc vars (Right (Func name xs)) = do
-            (varNum, preds, funcs) <- get
+            (varNum, preds) <- get
             case M.lookup name preds of
                 Nothing -> do
-                    put (varNum + 1, preds, M.insert name varNum funcs)
+                    put (varNum + 1, M.insert name varNum preds)
                     xs' <- mapM (replaceVarOrFunc vars) xs
                     return $ Right (Func varNum xs')
                 Just n -> do
                     xs' <- mapM (replaceVarOrFunc vars) xs
                     return $ Right (Func n xs')
 
-        newVarNum :: Ord a => State (Int, Map a Int, Map a Int) Int
+        newVarNum :: Ord a => State (Int, Map a Int) Int
         newVarNum = do
-            (varNum, preds, funcs) <- get
-            put (varNum + 1, preds, funcs)
+            (varNum, preds) <- get
+            put (varNum + 1, preds)
             return varNum
-{-
-findMaxInt :: Formula Int -> Int
-findMaxInt (Atom n) = n
-findMaxInt (Not (Atom n)) = n
-findMaxInt (f1 `And` f2) = max (findMaxInt f1) (findMaxInt f2)
-findMaxInt (f1 `Or` f2) = max (findMaxInt f1) (findMaxInt f2)
-findMaxInt _ = error "Formula is not in negated normal form"
 
+-- Applies herbrandtiztion to a Formula. Assumes negated normal form, and that
+-- every bound variable is unique.
+--
+-- It also removes all Exists quantifiers, since all formulas are implicitly
+-- bound by an Exists quantifiers after the herbrandtisation, which could be
+-- extracted to the front of the formula without changing the structure of the
+-- formula; We do not remove any important information by removing them.
+herbrandtisize :: Formula Int -> Formula Int
+herbrandtisize f = evalState (go S.empty M.empty f) (findMax f)
+    where
+        go :: Set (Var Int) -- Existentially quantified variables
+           -> Map (Var Int) (Func Int) -- Maps every Universially quantified variable to a unique function
+           -> Formula Int -- input
+           -> State Int (Formula Int) -- State of each new function variable
+        go vars funcs (Pred p xs) = Pred p <$> mapM (replaceVarOrFunc funcs) xs
+        go vars funcs (Not f) = Not <$> go vars funcs f
+        go vars funcs (f1 `And` f2) = liftM2 And (go vars funcs f1) (go vars funcs f2)
+        go vars funcs (f1 `Or` f2) = liftM2 Or (go vars funcs f1) (go vars funcs f2)
+        go vars funcs (Forall var f) = do
+            funcVar <- get
+            put $ funcVar + 1
+            let func = Func funcVar $ map Left $ toList vars
+            go vars (M.insert var func funcs) f
+        go vars funcs (Exists var f) = go (S.insert var vars) funcs f
+        go _ _ _ = error "Not in negated normal form"
+
+        replaceVarOrFunc :: Map (Var Int) (Func Int)
+                         -> Either (Var Int) (Func Int)
+                         -> State Int (Either (Var Int) (Func Int))
+        replaceVarOrFunc funcs var@(Left v) = maybe (return var) (return . Right) $ M.lookup v funcs
+        replaceVarOrFunc funcs (Right (Func f xs)) =
+            Right . Func f <$> mapM (replaceVarOrFunc funcs) xs
+
+findMax :: Formula Int -> Int
+findMax (Pred n xs) = max n $ findMax' xs
+    where
+        findMax' = foldr (\case Left (Var x) -> max x
+                                Right (Func f xs) -> max (max f $ findMax' xs)) 0
+findMax (Not f) = findMax f
+findMax (f1 `And` f2) = max (findMax f1) (findMax f2)
+findMax (f1 `Or` f2) = max (findMax f1) (findMax f2)
+findMax (f1 `Implies` f2) = max (findMax f1) (findMax f2)
+findMax (Forall (Var v) f) = max v $ findMax f
+findMax (Exists (Var v) f) = max v $ findMax f
+
+
+-- Assumes the formula is herbrandtized
+-- This is the standard translation into disjunctive normal form
+dnf :: Show a => Formula a -> Formula a
+dnf (Pred p xs) = Pred p xs
+dnf (Not (Pred p xs)) = Not (Pred p xs)
+dnf ((f1 `Or` f2) `And` f3) = dnf (f1 `And` f3) `Or` dnf (f2 `And` f3)
+dnf (f1 `And` (f2 `Or` f3)) = dnf (f1 `And` f2) `Or` dnf (f1 `And` f3)
+dnf (f1 `And` f2) =
+    let f1' = dnf f1
+        f2' = dnf f2
+        isOr (_ `Or` _) = True
+        isOr _ = False
+    in  if isOr f1' || isOr f2' then dnf (f1' `And` f2') else f1' `And` f2'
+dnf (f1 `Or` f2) = dnf f1 `Or` dnf f2
+dnf _ = error "The formula is not herbrandtized"
+
+type Sigma a = Set (Either (Var a) (Func a), Either (Var a) (Func a))
+
+unify :: Ord a => Atomic a -> Atomic a -> Sigma a -> Maybe (Sigma a)
+unify (Predicate x xs) (Negated y ys) sigma
+    | x /= y || length xs /= length ys = Nothing
+    | null xs && null ys = Just sigma
+    | otherwise = execStateT unifyState $ foldl' (flip S.insert) sigma $ zip xs ys
+unify (Negated x xs) (Predicate y ys) sigma
+    | x /= y || length xs /= length ys = Nothing
+    | null xs && null ys = Just sigma
+    | otherwise = execStateT unifyState $ foldl' (flip S.insert) sigma $ zip xs ys
+unify _ _ _ = Nothing
+
+unifyState :: Ord a => StateT (Sigma a) Maybe ()
+unifyState = do
+    -- delete
+    modify' $ S.filter (\case (Left (Var x), Left (Var y)) -> x /= y; _ -> True)
+    -- swap
+    modify' $ S.map (\case (f@(Right _), v@(Left _)) -> (v, f); x -> x)
+    continue1 <- decompose
+    continue2 <- occurs
+    when (continue1 || continue2) $ unifyState
+
+    where
+        occurs :: Ord a => StateT (Sigma a) Maybe Bool
+        occurs = do
+            equ <- get
+            let (varFuns, rest) = S.partition (\case (Left _, Right _) -> True
+                                                     _ -> False) equ
+            -- Occurs check
+            mapM_ (\case
+                (Left v, Right f) -> when (occurs' v (Right f)) $ lift Nothing
+                _ -> return ()) varFuns
+
+            -- replace variables
+            put $ foldl' (\equ pair@(Left v, Right f) -> S.insert pair $
+                             replace v f equ) rest varFuns
+            return . not . null $ varFuns
+
+        occurs' v (Right (Func f fs)) = any (occurs' v) fs
+        occurs' v (Left v') = v == v'
+
+        replace :: Ord a => (Var a) -> (Func a) -> Sigma a -> Sigma a
+        replace v f = S.map (\case
+            (Left v1, Left v2)
+                | v1 == v2 -> (Left v1, Left v2)
+                | v == v1 -> (Right f, Left v2)
+                | v == v2 -> (Left v1, Right f)
+                | otherwise -> (Left v1, Left v2)
+            (Left v1, f1)
+                | v == v1 -> (Right f, f1)
+                | otherwise -> (Left v1, f1)
+            (f1, Left v1)
+                | v == v1 -> (f1, Right f)
+                | otherwise -> (f1, Left v1)
+            pair -> pair)
+
+        decompose :: Ord a => StateT (Sigma a) Maybe Bool
+        decompose = do
+            equ <- get
+            let (funFuns, rest) = S.partition (\case (Right _, Right _) -> True
+                                                     _ -> False) equ
+            -- conflict
+            mapM_ (\case
+                (Right (Func f fs), Right (Func g gs)) ->
+                    when (f /= g || length fs /= length gs) $ lift Nothing
+                _ -> return ()) funFuns
+
+            -- decompose
+            put $ foldl' (\equ pair@(Right (Func f fs), Right (Func g gs)) ->
+                foldl' (flip S.insert) equ $ zip fs gs) rest funFuns
+
+            return . not . null $ funFuns
+
+
+{-
 type DCFState a = State (Int, [Formula a]) (Formula a)
 
 getNewVar :: State (Int, [Formula Int]) Int
@@ -153,7 +278,7 @@ getDefinitionalTuple = mapState (\(f, s@(_, set)) -> ((f, set), s))
 --Assumes mapInts has been applied to the formula
 dcfTranslation :: Formula Int -> Formula Int
 dcfTranslation f = tupleToDNF . evalState (getDefinitionalTuple . dcfStateTrans $ f)
-                   $ (findMaxInt f, [])
+                   $ (findMax f, [])
 -- The sub formulas are evaluated from right to left to preserve the original
 -- ordering of the variable. This is mostly done for debugging purposes
 dcfStateTrans :: Formula Int -> DCFState Int
@@ -208,22 +333,6 @@ tupleToDNF (formula, formulas) =
     in  if null mappedformulas then formula
         else formula `Or` foldr1 Or mappedformulas
 
---Assumes the formula is in negated normal form
---This is the standard translation into disjunctive normal form
-dnf :: Show a => Formula a -> Formula a
-dnf (Atom p) = Atom p
-dnf (Not (Atom p)) = Not (Atom p)
-dnf ((f1 `Or` f2) `And` f3) = dnf (f1 `And` f3) `Or` dnf (f2 `And` f3)
-dnf (f1 `And` (f2 `Or` f3)) = dnf (f1 `And` f2) `Or` dnf (f1 `And` f3)
-dnf (f1 `And` f2) =
-    let f1' = dnf f1
-        f2' = dnf f2
-        isOr (_ `Or` _) = True
-        isOr _ = False
-    in  if isOr f1' || isOr f2' then dnf (f1' `And` f2') else f1' `And` f2'
-dnf (f1 `Or` f2) = dnf f1 `Or` dnf f2
-
-
 -- Assumes the Formula is in dnf
 -- This funtion will transform a formula in dnf into set of sets of atomic
 -- formulas, represented as a list of sets. It will also do a bit of pruning
@@ -250,8 +359,7 @@ connectionClauses f = sortOn length . rmdups . evalState (finally f) $ (Just S.e
                     if S.member (Atomic p) set then put Nothing >> return id
                     else modify' (fmap (S.insert (Negated p))) >> return id
 
-        go (f1 `And` f2) = do
-            go f2 >> go f1
+        go (f1 `And` f2) = go f2 >> go f1
 
         go (f1 `Or` f2) = do
             put (Just S.empty)

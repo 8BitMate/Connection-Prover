@@ -41,7 +41,7 @@ checkProofs nameFomulaPairs prover =
                     return Invalid) nameFomulaPairs
 
 dnfProver :: Formula Text -> Proof
-dnfProver = prove . connectionClauses . dnf . mapInts . nnf
+dnfProver = undefined -- prove . connectionClauses . dnf . mapInts . nnf
 
 dcfProver :: Formula Text -> Proof
-dcfProver = prove . connectionClauses. dcfTranslation . mapInts . nnf
+dcfProver = undefined -- prove . connectionClauses. dcfTranslation . mapInts . nnf

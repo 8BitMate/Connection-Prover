@@ -48,7 +48,7 @@ forall = do
 predicate :: Parser (Formula Text)
 predicate = do
     p <- prop
-    vars <- parens $ sepBy funcVar comma
+    vars <- option [] $ parens $ sepBy1 funcVar comma
     return $ Pred p $ vars
 
 lexeme :: Parser a -> Parser a
@@ -89,7 +89,7 @@ prop = fmap T.pack $ lexeme $ do
 func :: Parser (Func Text)
 func = lexeme $ do
     name <- prop
-    vars <- parens $ sepBy funcVar comma
+    vars <- option [] $ parens $ sepBy1 funcVar comma
     return $ Func name vars
 
 var :: Parser (Var Text)
