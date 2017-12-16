@@ -1,4 +1,4 @@
-{-# LANGUAGE LambdaCase, DeriveFunctor #-}
+{-# LANGUAGE LambdaCase, DeriveFunctor, MultiWayIf #-}
 
 module Prover where
 
@@ -8,8 +8,9 @@ import qualified Data.Map as M
 import Data.Set (Set (..))
 import qualified Data.Set as S
 import Data.List (sortOn, intercalate)
-import Control.Monad.State.Strict
 import Data.Foldable
+import Data.Maybe
+import Control.Monad.State.Strict
 import Control.Exception
 -- |
 -- This is a connection logic prover for first order logic
@@ -183,80 +184,88 @@ dnf (f1 `And` f2) =
 dnf (f1 `Or` f2) = dnf f1 `Or` dnf f2
 dnf _ = error "The formula is not herbrandtized"
 
-type Sigma a = Set (Either (Var a) (Func a), Either (Var a) (Func a))
+type Equation a = (Either (Var a) (Func a), Either (Var a) (Func a))
+type Sigma a = [Equation a]
 
-unify :: Ord a => Atomic a -> Atomic a -> Sigma a -> Maybe (Sigma a)
+unify :: Eq a => Atomic a -> Atomic a -> Sigma a -> Maybe (Sigma a)
 unify (Predicate x xs) (Negated y ys) sigma
     | x /= y || length xs /= length ys = Nothing
-    | null xs && null ys = Just sigma
-    | otherwise = execStateT unifyState $ foldl' (flip S.insert) sigma $ zip xs ys
+    | null xs && null ys = Just sigma -- Just a check for speedup
+    | otherwise = unify' $ (zip xs ys) ++ sigma
 unify (Negated x xs) (Predicate y ys) sigma
     | x /= y || length xs /= length ys = Nothing
-    | null xs && null ys = Just sigma
-    | otherwise = execStateT unifyState $ foldl' (flip S.insert) sigma $ zip xs ys
+    | null xs && null ys = Just sigma -- Just a check for speedup
+    | otherwise = unify' $ (zip xs ys) ++ sigma
 unify _ _ _ = Nothing
 
-unifyState :: Ord a => StateT (Sigma a) Maybe ()
-unifyState = do
-    -- delete
-    modify' $ S.filter (\case (Left (Var x), Left (Var y)) -> x /= y; _ -> True)
-    -- swap
-    modify' $ S.map (\case (f@(Right _), v@(Left _)) -> (v, f); x -> x)
-    continue1 <- decompose
-    continue2 <- occurs
-    when (continue1 || continue2) $ unifyState
+unify' :: Eq a => Sigma a -> Maybe (Sigma a)
+unify' sigma =
+    let go1 [] = Just ([], [])
+        go1 (pair@(Left v@(Var x), t@(Left (Var y))):rest)
+            | x == y = go1 rest
+            | otherwise = go2 pair =<< (go1 $ replace v t rest)
+        go1 (pair@(Left v, t@(Right _)):rest)
+            | occurs v t = Nothing
+            | otherwise = go2 pair =<< (go1 $ replace v t rest)
+        go1 ((t@(Right _), Left v):rest)
+            | occurs v t = Nothing
+            | otherwise = go2 (Left v, t) =<< (go1 $ replace v t rest)
+        go1 (pair:rest) = go2 pair =<< go1 rest
 
+        go2 pair (sigma, subs) = case foldl' go2' pair subs of
+            p@(Left v, t) -> return (p:sigma, p:subs)
+            p -> return (p:sigma, subs)
+
+        go2' pair (Left v, t) = head $ replace v t [pair]
+        go2' _ _ = error "Illegal situation" --Should never occur
+
+    in  fst <$> go1 sigma >>= decompose
+
+
+occurs :: Eq a => (Var a) -> Either (Var a) (Func a) -> Bool
+occurs v (Right (Func f fs)) = any (occurs v) fs
+occurs v (Left v') = v == v'
+
+replace :: Eq a => (Var a) -> Either (Var a) (Func a) -> Sigma a -> Sigma a
+replace v t sigma =
+    let fstHalf = map (replace' v t . fst) sigma
+        sndHalf = map (replace' v t . snd) sigma
+    in  zip fstHalf sndHalf
     where
-        occurs :: Ord a => StateT (Sigma a) Maybe Bool
-        occurs = do
-            equ <- get
-            let (varFuns, rest) = S.partition (\case (Left _, Right _) -> True
-                                                     _ -> False) equ
-            -- Occurs check
-            mapM_ (\case
-                (Left v, Right f) -> when (occurs' v (Right f)) $ lift Nothing
-                _ -> return ()) varFuns
+        replace' v t (Left v')
+            | v == v' = t
+            | otherwise = Left v'
+        replace' v t (Right (Func f fs)) =
+            Right (Func f $ map (replace' v t) fs)
 
-            -- replace variables
-            put $ foldl' (\equ pair@(Left v, Right f) -> S.insert pair $
-                             replace v f equ) rest varFuns
-            return . not . null $ varFuns
+decompose :: Eq a => Sigma a -> Maybe (Sigma a)
+decompose sigma =
+    case viewBy (\case (Right _, Right _) -> True; _ -> False) sigma of
+        Nothing -> return sigma
+        Just ((Right (Func f fs), Right (Func g gs)), rest)
+            | f /= g || length fs /= length gs -> Nothing
+            | otherwise -> do
+                s <- unify' $ zip fs gs
+                if | null s -> decompose rest
+                   | null rest -> return s
+                   | otherwise -> unify' (s ++ rest)
 
-        occurs' v (Right (Func f fs)) = any (occurs' v) fs
-        occurs' v (Left v') = v == v'
+-- Extract the first occurance of anything that satisfies the pradicate, if any.
+viewBy :: (a -> Bool) -> [a] -> Maybe (a, [a])
+viewBy f [] = Nothing
+viewBy f (x:xs)
+    | f x = Just (x, xs)
+    | otherwise = (fmap . fmap) (x:) $ viewBy f xs
 
-        replace :: Ord a => (Var a) -> (Func a) -> Sigma a -> Sigma a
-        replace v f = S.map (\case
-            (Left v1, Left v2)
-                | v1 == v2 -> (Left v1, Left v2)
-                | v == v1 -> (Right f, Left v2)
-                | v == v2 -> (Left v1, Right f)
-                | otherwise -> (Left v1, Left v2)
-            (Left v1, f1)
-                | v == v1 -> (Right f, f1)
-                | otherwise -> (Left v1, f1)
-            (f1, Left v1)
-                | v == v1 -> (f1, Right f)
-                | otherwise -> (f1, Left v1)
-            pair -> pair)
-
-        decompose :: Ord a => StateT (Sigma a) Maybe Bool
-        decompose = do
-            equ <- get
-            let (funFuns, rest) = S.partition (\case (Right _, Right _) -> True
-                                                     _ -> False) equ
-            -- conflict
-            mapM_ (\case
-                (Right (Func f fs), Right (Func g gs)) ->
-                    when (f /= g || length fs /= length gs) $ lift Nothing
-                _ -> return ()) funFuns
-
-            -- decompose
-            put $ foldl' (\equ pair@(Right (Func f fs), Right (Func g gs)) ->
-                foldl' (flip S.insert) equ $ zip fs gs) rest funFuns
-
-            return . not . null $ funFuns
-
+-- remove duplicate elements
+-- essentially the same function as Nikita Volkov's answer on stack overflow
+-- https://stackoverflow.com/questions/16108714/haskell-removing-duplicates-from-a-list
+rmdups :: Ord a => [a] -> [a]
+rmdups = go S.empty
+    where
+        go _ [] = []
+        go set (x:xs) = if S.member x set then go set xs
+                        else x : go (S.insert x set) xs
 
 {-
 type DCFState a = State (Int, [Formula a]) (Formula a)
@@ -382,27 +391,14 @@ connectionClauses f = sortOn length . rmdups . evalState (finally f) $ (Just S.e
             sets <- go formula
             maybeSet <- get
             return $ maybe sets (\set -> (set:) . sets) maybeSet $ []
-
--- remove duplicate elements
--- essentially the same function as Nikita Volkov's answer on stack overflow
--- https://stackoverflow.com/questions/16108714/haskell-removing-duplicates-from-a-list
-rmdups :: Ord a => [a] -> [a]
-rmdups = go S.empty
-    where
-        go _ [] = []
-        go set (x:xs) = if S.member x set then go set xs
-                        else x : go (S.insert x set) xs
-
+-}
 -- will delete an element on each index, and return pairs, containing the deleted
 -- element and the rest of the list
 -- Example: splitViews [1,2,3] = [(1,[2,3]), (2,[1,3]), (3,[1,2])]
 splitViews :: [a] -> [(a, [a])]
 splitViews [] = []
-splitViews (x:xs) =
-    let views = splitViews xs
-        views' = map (\(y, ys) -> (y, x:ys)) views
-    in  (x, xs) : views'
-
+splitViews (x:xs) = (x, xs) : ((fmap . fmap) (x:) $ splitViews xs)
+{-
 -- I made these two functions for future optimizations
 -- I tried to do this method using different kinds of folds, but I could not
 -- ensure lazyness, so I gave up and did it with normal recursion
