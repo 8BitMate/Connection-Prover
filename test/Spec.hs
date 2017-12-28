@@ -19,15 +19,8 @@ main = do
     nameFomulaPairs <- mapM readFormula files
     TIO.putStrLn "----Now testing with dnf----\n"
     dnfProofs <- checkProofs nameFomulaPairs dnfProver
-    TIO.putStrLn "----Now testing with dcf----\n"
-    dcfProofs <- checkProofs nameFomulaPairs dcfProver
     putStrLn "\n----dnfProofs----"
     print dnfProofs
-    putStrLn "\n----dcfProofs----"
-    print dcfProofs
-    if (dnfProofs == dcfProofs)
-        then TIO.putStrLn "The provers prove the same thing"
-        else TIO.putStrLn "The provers prove different things"
 
 checkProofs :: [(Text, Formula Text)] -> (Formula Text -> Proof) -> IO [Proof]
 checkProofs nameFomulaPairs prover =
@@ -41,7 +34,4 @@ checkProofs nameFomulaPairs prover =
                     return Invalid) nameFomulaPairs
 
 dnfProver :: Formula Text -> Proof
-dnfProver = undefined -- prove . connectionClauses . dnf . mapInts . nnf
-
-dcfProver :: Formula Text -> Proof
-dcfProver = undefined -- prove . connectionClauses. dcfTranslation . mapInts . nnf
+dnfProver = prove . connectionClauses . dnf . herbrandtisize . mapInts . nnf

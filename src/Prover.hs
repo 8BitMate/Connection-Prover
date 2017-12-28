@@ -29,7 +29,7 @@ data Formula a = Pred a [Either (Var a) (Func a)]
                | Exists (Var a) (Formula a) deriving Eq
 
 data Atomic a = Predicate a [Either (Var a) (Func a)]
-              | Negated a [Either (Var a) (Func a)]
+              | Negated a [Either (Var a) (Func a)] deriving (Eq, Ord)
 
 data Proof = Valid | Invalid deriving (Eq, Show)
 
@@ -50,6 +50,14 @@ instance (Show a) => Show (Var a) where
 instance (Show a) => Show (Func a) where
     show (Func f []) = show f
     show (Func f ls) = show f ++ "(" ++ intercalate ", "
+        (map (\case (Left x) -> show x; (Right x) -> show x) ls) ++ ")"
+
+instance (Show a) => Show (Atomic a) where
+    show (Predicate p []) = show p
+    show (Predicate p ls) = show p ++ "(" ++ intercalate ", "
+        (map (\case (Left x) -> show x; (Right x) -> show x) ls) ++ ")"
+    show (Negated p []) = "~" ++ show p
+    show (Negated p ls) = "~" ++ show p ++ "(" ++ intercalate ", "
         (map (\case (Left x) -> show x; (Right x) -> show x) ls) ++ ")"
 
 -- to negation normal form
@@ -257,16 +265,6 @@ viewBy f (x:xs)
     | f x = Just (x, xs)
     | otherwise = (fmap . fmap) (x:) $ viewBy f xs
 
--- remove duplicate elements
--- essentially the same function as Nikita Volkov's answer on stack overflow
--- https://stackoverflow.com/questions/16108714/haskell-removing-duplicates-from-a-list
-rmdups :: Ord a => [a] -> [a]
-rmdups = go S.empty
-    where
-        go _ [] = []
-        go set (x:xs) = if S.member x set then go set xs
-                        else x : go (S.insert x set) xs
-
 {-
 type DCFState a = State (Int, [Formula a]) (Formula a)
 
@@ -341,32 +339,37 @@ tupleToDNF (formula, formulas) =
     let mappedformulas = map dnf formulas
     in  if null mappedformulas then formula
         else formula `Or` foldr1 Or mappedformulas
+-}
 
--- Assumes the Formula is in dnf
+type Clause a = Set (Atomic a)
+type Path a = Set (Atomic a)
+type Matrix a = [Clause a]
+
+-- Assumes the formula is herbrandtized and in dnf.
 -- This funtion will transform a formula in dnf into set of sets of atomic
 -- formulas, represented as a list of sets. It will also do a bit of pruning
 -- eliminating all clauses countaining p and ~p for all predicates p. If all
 -- clauses are of the form mentioned above, the resulting value is [], since the
 -- formula is unsatisfiable; otherwise the return value is a normal list.
-connectionClauses :: Ord a => Formula a -> [Set (Atomic a)]
+connectionClauses :: Ord a => Formula a -> Matrix a
 connectionClauses f = sortOn length . rmdups . evalState (finally f) $ (Just S.empty)
     where
-        go :: Ord a => Formula a -> State (Maybe (Set (Atomic a))) ([Set (Atomic a)] -> [Set (Atomic a)])
-        go (Atom p) = do
+        go :: Ord a => Formula a -> State (Maybe (Clause a)) (Matrix a -> Matrix a)
+        go (Pred p xs) = do
             maybeSet <- get
             case maybeSet of
                 Nothing -> return id
                 Just set ->
-                    if S.member (Negated p) set then put Nothing >> return id
-                    else modify' (fmap (S.insert (Atomic p))) >> return id
+                    if member (Negated p xs) set then put Nothing >> return id
+                    else put (Just (S.insert (Predicate p xs) set)) >> return id
 
-        go (Not (Atom p)) = do
+        go (Not (Pred p xs)) = do
             maybeSet <- get
             case maybeSet of
                 Nothing -> return id
                 Just set ->
-                    if S.member (Atomic p) set then put Nothing >> return id
-                    else modify' (fmap (S.insert (Negated p))) >> return id
+                    if member (Predicate p xs) set then put Nothing >> return id
+                    else put (Just (S.insert (Negated p xs) set)) >> return id
 
         go (f1 `And` f2) = go f2 >> go f1
 
@@ -386,74 +389,101 @@ connectionClauses f = sortOn length . rmdups . evalState (finally f) $ (Just S.e
 
         go _ = error "Not in disjunctive normal form"
 
-        finally :: Ord a => Formula a -> State (Maybe (Set (Atomic a))) [Set (Atomic a)]
+        finally :: Ord a => Formula a -> State (Maybe (Clause a)) (Matrix a)
         finally formula = do
             sets <- go formula
             maybeSet <- get
             return $ maybe sets (\set -> (set:) . sets) maybeSet $ []
--}
--- will delete an element on each index, and return pairs, containing the deleted
--- element and the rest of the list
--- Example: splitViews [1,2,3] = [(1,[2,3]), (2,[1,3]), (3,[1,2])]
-splitViews :: [a] -> [(a, [a])]
-splitViews [] = []
-splitViews (x:xs) = (x, xs) : ((fmap . fmap) (x:) $ splitViews xs)
-{-
--- I made these two functions for future optimizations
--- I tried to do this method using different kinds of folds, but I could not
--- ensure lazyness, so I gave up and did it with normal recursion
-allM :: (Foldable t, Monad m) => (a -> m Bool) -> t a -> m Bool
-allM f = go f . toList
+
+-- remove duplicate elements
+-- essentially the same function as Nikita Volkov's answer on stack overflow
+-- https://stackoverflow.com/questions/16108714/haskell-removing-duplicates-from-a-list
+rmdups :: Ord a => [a] -> [a]
+rmdups = go S.empty
+    where
+        go _ [] = []
+        go set (x:xs) = if S.member x set then go set xs
+                        else x : go (S.insert x set) xs
+
+allM :: Monad m => (a -> m Bool) -> [a] -> m Bool
+allM f = go f
     where
         go _ [] = return True
         go f (x:xs) = do
             bool <- f x
             if bool then allM f xs else return False
 
-anyM :: (Foldable t, Monad m) => (a -> m Bool) -> t a -> m Bool
-anyM f = go f . toList
+anyM :: Monad m => (a -> m Bool) -> [a] -> m Bool
+anyM f = go f
     where
         go _ [] = return False
         go f (x:xs) = do
             bool <- f x
             if bool then return True else anyM f xs
 
-prove :: Ord a => [Set (Atomic' a)] -> Proof
+-- will delete an element on each index, and return pairs, containing the deleted
+-- element and the rest of the list
+-- Example: splitViews [1,2,3] = [(1,[2,3]), (2,[1,3]), (3,[1,2])]
+splitViews :: [a] -> [(a, [a])]
+splitViews [] = []
+splitViews (x:xs) = (x, xs) : ((fmap . fmap) (x:) $ splitViews xs)
+
+-- Efficient way of finding all Predicates or Negated atoms with name p
+members :: Ord a => Atomic a -> Clause a -> Clause a
+members (Predicate p _) =
+    S.takeWhileAntitone (\case Predicate p' _ -> p == p'; _ -> False)
+    . S.dropWhileAntitone (\case Predicate p' _ -> p' < p; _ -> False)
+members (Negated p _) =
+    S.takeWhileAntitone (\case Negated p' _ -> p == p'; _ -> False)
+    . S.dropWhileAntitone (\case Negated p' _ -> p' < p; _ -> True)
+
+member :: Ord a => Atomic a -> Clause a -> Bool
+member p = (/= S.empty) . members p
+
+notMember :: Ord a => Atomic a -> Clause a -> Bool
+notMember p = (== S.empty) . members p
+
+prove :: Ord a => Matrix a -> Proof
 prove formulas = if start (splitViews formulas) S.empty == True then Valid else Invalid
     where
         -- The formula is valid if it can prove the formula is valid starting
         -- from eny clause
-        start :: Ord a => [(Set (Atomic' a), [Set (Atomic' a)])] -> Set (Atomic' a) -> Bool
-        start formulaMatrixPair path = any (\(clause, matrix) ->
-            solve clause path matrix) $ formulaMatrixPair
+        start :: Ord a => [(Clause a, Matrix a)] -> Path a -> Bool
+        start clauseMatrixPair path = any (\(clause, matrix) ->
+            snd $ solve clause path matrix []) $
+            filter (positiveClause . fst) clauseMatrixPair
 
-        solve clause path matrix =
-            let newMatrix = pruneMatrix matrix path
-            in  all (\atom -> closeBranch atom path newMatrix) clause
-
-        -- If the compliment of p exists in the path, then we can close that branch
-        reductionRule (Atomic' p) = S.member (Negated p)
-        reductionRule (Negated p) = S.member (Atomic' p)
+        positiveClause = all (\case (Predicate _ _) -> True; _ -> False)
 
         -- remove clauses which contains atoms that exists in the current clause
-        pruneMatrix :: Ord a => [Set (Atomic' a)] -> Set (Atomic' a) -> [Set (Atomic' a)]
-        pruneMatrix = foldr (\atom -> filter (S.notMember atom))
+        pruneMatrix :: Ord a => Matrix a -> Clause a -> Matrix a
+        pruneMatrix = foldr (\atom -> filter (notMember atom))
 
         -- find all clauses that clashes with p, meaning, all clauses that
         -- contain the compliment of p. Returns a list of pairs containing
         -- whith a clashing clause, and all other unvisited clauses.
-        findClashingClauses (Atomic' p) = filter (\(set, _) ->
-            S.member (Negated p) set) . splitViews
-        findClashingClauses (Negated p) = filter (\(set, _) ->
-            S.member (Atomic' p) set) . splitViews
+        findClashingClauses :: Ord a => Atomic a -> Matrix a -> [(Clause a, Matrix a)]
+        findClashingClauses (Predicate p xs) = filter (\(set, _) ->
+            member (Negated p xs) set) . splitViews
+        findClashingClauses (Negated p xs) = filter (\(set, _) ->
+            member (Predicate p xs) set) . splitViews
+
+        solve :: Ord a => Clause a -> Path a -> Matrix a -> Sigma a -> (Sigma a, Bool)
+        solve clause path matrix sigma =
+            let newMatrix = pruneMatrix matrix clause
+            in  undefined -- all (\atom -> closeBranch atom path newMatrix) clause
+
+        -- If the compliment of p exists in the path, then we can close that branch
+        reductionRule (Predicate p xs) = member (Negated p xs)
+        reductionRule (Negated p xs) = member (Predicate p xs)
 
         -- Returns true if it can close any branch starting starting from atom
-        findPath atom path =
+        findPath atom path sigma =
             let newPath = (S.insert atom path)
-            in  any (\(clause, matrix) ->
-                solve clause newPath matrix) . findClashingClauses atom
+            in  undefined -- any (\(clause, matrix) ->
+                -- solve clause newPath matrix) . findClashingClauses atom
 
         -- A branch can be closed if it can apply the reduction rule, or find
         -- a path that closes the formula
-        closeBranch atom path matrix = reductionRule atom path || findPath atom path matrix
--}
+        closeBranch :: Ord a => Atomic a -> Path a -> Matrix a -> Sigma a -> (Sigma a, Bool)
+        closeBranch atom path matrix sigma = undefined -- reductionRule atom path || findPath atom path matrix

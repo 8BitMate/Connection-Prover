@@ -17,8 +17,7 @@ readArgs :: Ord a => IO (Formula a -> Proof, FilePath)
 readArgs = do
     progName <- getProgName
     args <- getArgs
-    undefined
-    {-case args of
+    case args of
         [] -> die $ "Usage: " ++ progName ++ " [dnf|dcf] <file path>"
         [fileName] -> do
             TIO.putStrLn "Uses standard translation to disjunctive normal form"
@@ -26,8 +25,8 @@ readArgs = do
         [flag, fileName] -> do
             case flag of
                 "dnf" -> return (prove . connectionClauses . dnf . mapInts . nnf, fileName)
-                "dcf" -> return (prove . connectionClauses. dcfTranslation . mapInts . nnf, fileName)
-                _ -> do die $ "Invalid argument: " ++ flag; error ""-}
+                "dcf" -> die "Currently unsupported"
+                _ -> do die $ "Invalid argument: " ++ flag; error ""
 
 readFile' :: FilePath -> IO Text
 readFile' path = onException (TIO.readFile path) $ die "The file does not exist"
