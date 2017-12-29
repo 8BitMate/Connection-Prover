@@ -265,82 +265,6 @@ viewBy f (x:xs)
     | f x = Just (x, xs)
     | otherwise = (fmap . fmap) (x:) $ viewBy f xs
 
-{-
-type DCFState a = State (Int, [Formula a]) (Formula a)
-
-getNewVar :: State (Int, [Formula Int]) Int
-getNewVar = do (var, _) <- modify' (\(var, set) -> (var + 1, set)) >> get
-               return var
-
-getDCFSet :: State (Int, [Formula Int]) [Formula Int]
-getDCFSet = gets (\(_, set) -> set)
-
-putDCFSet :: [Formula Int] -> State (Int, [Formula Int]) ()
-putDCFSet set = modify' (\(var, _) -> (var, set))
-
-getDefinitionalTuple :: DCFState Int -> State (Int, [Formula Int]) (Formula Int, [Formula Int])
-getDefinitionalTuple = mapState (\(f, s@(_, set)) -> ((f, set), s))
-
---Definitional clausal form translation
---Assumes mapInts has been applied to the formula
-dcfTranslation :: Formula Int -> Formula Int
-dcfTranslation f = tupleToDNF . evalState (getDefinitionalTuple . dcfStateTrans $ f)
-                   $ (findMax f, [])
--- The sub formulas are evaluated from right to left to preserve the original
--- ordering of the variable. This is mostly done for debugging purposes
-dcfStateTrans :: Formula Int -> DCFState Int
-dcfStateTrans (Atom n) = return $ Atom n
-dcfStateTrans (Not (Atom n)) = return $ Not (Atom n)
-dcfStateTrans ((f1 `Or` f2) `And` (f3 `Or` f4)) = do
-    f4' <- dcfStateTrans f4
-    f3' <- dcfStateTrans f3
-    f2' <- dcfStateTrans f2
-    f1' <- dcfStateTrans f1
-    newVar1 <- getNewVar
-    newVar2 <- getNewVar
-    set <- getDCFSet
-    putDCFSet $ (Not (Atom newVar2) `And` f1') : (Not (Atom newVar2) `And` f2') :
-                (Not (Atom newVar1) `And` f3') : (Not (Atom newVar1) `And` f4') : set
-    return (Atom newVar2 `And` Atom newVar1)
-
-dcfStateTrans ((f1 `Or` f2) `And` f3) = do
-    f3' <- dcfStateTrans f3
-    f2' <- dcfStateTrans f2
-    f1' <- dcfStateTrans f1
-    newVar <- getNewVar
-    set <- getDCFSet
-    putDCFSet $ (Not (Atom newVar) `And` f1') : (Not (Atom newVar) `And` f2') : set
-    return (Atom newVar `And` f3')
-
-dcfStateTrans (f1 `And` (f2 `Or` f3)) = do
-    f3' <- dcfStateTrans f3
-    f2' <- dcfStateTrans f2
-    newVar <- getNewVar
-    set <- getDCFSet
-    putDCFSet $ (Not (Atom newVar) `And` f2') : (Not (Atom newVar) `And` f3') : set
-    f1' <- dcfStateTrans f1
-    return (f1' `And` Atom newVar)
-
-dcfStateTrans (f1 `And` f2) = do
-    f2' <- dcfStateTrans f2
-    f1' <- dcfStateTrans  f1
-    return (f1' `And` f2')
-
-dcfStateTrans (f1 `Or` f2) = do
-    f2' <- dcfStateTrans f2
-    f1' <- dcfStateTrans f1
-    return (f1' `Or` f2')
-
-dcfStateTrans _ = error "Formula is not in negated normal form"
-
---Assumes the formula is in negated normal form
-tupleToDNF :: (Formula Int, [Formula Int]) -> Formula Int
-tupleToDNF (formula, formulas) =
-    let mappedformulas = map dnf formulas
-    in  if null mappedformulas then formula
-        else formula `Or` foldr1 Or mappedformulas
--}
-
 type Clause a = Set (Atomic a)
 type Path a = Set (Atomic a)
 type Matrix a = [Clause a]
@@ -405,22 +329,6 @@ rmdups = go S.empty
         go set (x:xs) = if S.member x set then go set xs
                         else x : go (S.insert x set) xs
 
-allM :: Monad m => (a -> m Bool) -> [a] -> m Bool
-allM f = go f
-    where
-        go _ [] = return True
-        go f (x:xs) = do
-            bool <- f x
-            if bool then allM f xs else return False
-
-anyM :: Monad m => (a -> m Bool) -> [a] -> m Bool
-anyM f = go f
-    where
-        go _ [] = return False
-        go f (x:xs) = do
-            bool <- f x
-            if bool then return True else anyM f xs
-
 -- will delete an element on each index, and return pairs, containing the deleted
 -- element and the rest of the list
 -- Example: splitViews [1,2,3] = [(1,[2,3]), (2,[1,3]), (3,[1,2])]
@@ -437,53 +345,86 @@ members (Negated p _) =
     S.takeWhileAntitone (\case Negated p' _ -> p == p'; _ -> False)
     . S.dropWhileAntitone (\case Negated p' _ -> p' < p; _ -> True)
 
+-- Dual to members that finds the negated members of the atom
+negatedMembers :: Ord a => Atomic a -> Clause a -> Clause a
+negatedMembers (Predicate p xs) = members $ Negated p xs
+negatedMembers (Negated p xs) = members $ Predicate p xs
+
 member :: Ord a => Atomic a -> Clause a -> Bool
 member p = (/= S.empty) . members p
+{-# INLINE member #-}
+
+negatedMember :: Ord a => Atomic a -> Clause a -> Bool
+negatedMember p = (/= S.empty) . negatedMembers p
+{-# INLINE negatedMember #-}
 
 notMember :: Ord a => Atomic a -> Clause a -> Bool
 notMember p = (== S.empty) . members p
+{-# INLINE notMember #-}
+
+notNegatedMember :: Ord a => Atomic a -> Clause a -> Bool
+notNegatedMember p = (== S.empty) . negatedMembers p
+{-# INLINE notNegatedMember #-}
 
 prove :: Ord a => Matrix a -> Proof
 prove formulas = if start (splitViews formulas) S.empty == True then Valid else Invalid
     where
         -- The formula is valid if it can prove the formula is valid starting
-        -- from eny clause
+        -- from any positive clause
         start :: Ord a => [(Clause a, Matrix a)] -> Path a -> Bool
         start clauseMatrixPair path = any (\(clause, matrix) ->
             snd $ solve clause path matrix []) $
             filter (positiveClause . fst) clauseMatrixPair
 
+        positiveClause :: Ord a => Clause a -> Bool
         positiveClause = all (\case (Predicate _ _) -> True; _ -> False)
 
-        -- remove clauses which contains atoms that exists in the current clause
-        pruneMatrix :: Ord a => Matrix a -> Clause a -> Matrix a
+        -- remove clauses which contains atoms that exists in the current path
+        pruneMatrix :: Ord a => Matrix a -> Path a -> Matrix a
         pruneMatrix = foldr (\atom -> filter (notMember atom))
 
         -- find all clauses that clashes with p, meaning, all clauses that
         -- contain the compliment of p. Returns a list of pairs containing
         -- whith a clashing clause, and all other unvisited clauses.
         findClashingClauses :: Ord a => Atomic a -> Matrix a -> [(Clause a, Matrix a)]
-        findClashingClauses (Predicate p xs) = filter (\(set, _) ->
-            member (Negated p xs) set) . splitViews
-        findClashingClauses (Negated p xs) = filter (\(set, _) ->
-            member (Predicate p xs) set) . splitViews
+        findClashingClauses atom = filter (\(set, _) ->
+            negatedMember atom set) . splitViews
 
         solve :: Ord a => Clause a -> Path a -> Matrix a -> Sigma a -> (Sigma a, Bool)
         solve clause path matrix sigma =
-            let newMatrix = pruneMatrix matrix clause
-            in  undefined -- all (\atom -> closeBranch atom path newMatrix) clause
+            let newMatrix = pruneMatrix matrix path
+            in  go newMatrix sigma $ toList clause
+            where
+                go _ currentSigma [] = (currentSigma, True)
+                go matrix currentSigma (atom:clause) =
+                    let t@(newSigma, closed) = closeBranch atom path matrix currentSigma
+                    in  if closed then go matrix newSigma clause else (sigma, False)
+
 
         -- If the compliment of p exists in the path, then we can close that branch
-        reductionRule (Predicate p xs) = member (Negated p xs)
-        reductionRule (Negated p xs) = member (Predicate p xs)
+        reductionRule :: Ord a => Atomic a -> Path a -> Sigma a -> (Sigma a, Bool)
+        reductionRule atom path sigma
+            | negatedMember atom path =
+                let unifier =  (\neg -> unify atom neg sigma)
+                               . S.findMin $ negatedMembers atom path
+                in maybe (sigma, False) (\sigma' -> (sigma', True)) unifier
+            | otherwise = (sigma, False)
 
-        -- Returns true if it can close any branch starting starting from atom
-        findPath atom path sigma =
-            let newPath = (S.insert atom path)
-            in  undefined -- any (\(clause, matrix) ->
-                -- solve clause newPath matrix) . findClashingClauses atom
+        -- Returns true and a new unifier if it can close any branch starting starting from atom
+        findPath :: Ord a => Atomic a -> Path a -> Matrix a -> Sigma a -> (Sigma a, Bool)
+        findPath atom path matrix sigma = go $ findClashingClauses atom matrix
+            where
+                go [] = (sigma, False)
+                go ((clause, matrix):clashes) =
+                    let neg = S.findMin $ negatedMembers atom clause
+                        unifier = unify atom neg sigma
+                        newClause = S.delete neg clause
+                        newPath = S.insert atom path
+                    in  maybe (go clashes) (\sigma' -> solve newClause newPath matrix sigma') unifier
 
         -- A branch can be closed if it can apply the reduction rule, or find
         -- a path that closes the formula
         closeBranch :: Ord a => Atomic a -> Path a -> Matrix a -> Sigma a -> (Sigma a, Bool)
-        closeBranch atom path matrix sigma = undefined -- reductionRule atom path || findPath atom path matrix
+        closeBranch atom path matrix sigma =
+            let t1@(_, reduction) = reductionRule atom path sigma
+            in  if reduction then t1 else findPath atom path matrix sigma
