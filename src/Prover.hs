@@ -1,3 +1,5 @@
+{-# LANGUAGE LambdaCase #-}
+
 module Prover where
 
 import Prelude hiding (lookup)
@@ -167,6 +169,9 @@ dnf (f1 `And` f2) =
     in  if isOr f1' || isOr f2' then dnf (f1' `And` f2') else f1' `And` f2'
 dnf (f1 `Or` f2) = dnf f1 `Or` dnf f2
 
+type Clause a = Set (Atomic a)
+type Path a = Set (Atomic a)
+type Matrix a = [Clause a]
 
 -- Assumes the Formula is in dnf
 -- This funtion will transform a formula in dnf into set of sets of atomic
@@ -174,10 +179,10 @@ dnf (f1 `Or` f2) = dnf f1 `Or` dnf f2
 -- eliminating all clauses countaining p and ~p for all predicates p. If all
 -- clauses are of the form mentioned above, the resulting value is [], since the
 -- formula is unsatisfiable; otherwise the return value is a normal list.
-connectionClauses :: Ord a => Formula a -> [Set (Atomic a)]
+connectionClauses :: Ord a => Formula a -> Matrix a
 connectionClauses f = sortOn length . rmdups . evalState (finally f) $ (Just S.empty)
     where
-        go :: Ord a => Formula a -> State (Maybe (Set (Atomic a))) ([Set (Atomic a)] -> [Set (Atomic a)])
+        go :: Ord a => Formula a -> State (Maybe (Clause a)) (Matrix a -> Matrix a)
         go (Atom p) = do
             maybeSet <- get
             case maybeSet of
@@ -213,7 +218,7 @@ connectionClauses f = sortOn length . rmdups . evalState (finally f) $ (Just S.e
 
         go _ = error "Not in disjunctive normal form"
 
-        finally :: Ord a => Formula a -> State (Maybe (Set (Atomic a))) [Set (Atomic a)]
+        finally :: Ord a => Formula a -> State (Maybe (Clause a)) (Matrix a)
         finally formula = do
             sets <- go formula
             maybeSet <- get
@@ -234,38 +239,19 @@ rmdups = go S.empty
 -- Example: splitViews [1,2,3] = [(1,[2,3]), (2,[1,3]), (3,[1,2])]
 splitViews :: [a] -> [(a, [a])]
 splitViews [] = []
-splitViews (x:xs) =
-    let views = splitViews xs
-        views' = map (\(y, ys) -> (y, x:ys)) views
-    in  (x, xs) : views'
+splitViews (x:xs) = (x, xs) : ((fmap . fmap) (x:) $ splitViews xs)
 
--- I made these two functions for future optimizations
--- I tried to do this method using different kinds of folds, but I could not
--- ensure lazyness, so I gave up and did it with normal recursion
-allM :: (Foldable t, Monad m) => (a -> m Bool) -> t a -> m Bool
-allM f = go f . toList
-    where
-        go _ [] = return True
-        go f (x:xs) = do
-            bool <- f x
-            if bool then allM f xs else return False
-
-anyM :: (Foldable t, Monad m) => (a -> m Bool) -> t a -> m Bool
-anyM f = go f . toList
-    where
-        go _ [] = return False
-        go f (x:xs) = do
-            bool <- f x
-            if bool then return True else anyM f xs
-
-prove :: Ord a => [Set (Atomic a)] -> Proof
+prove :: Ord a => Matrix a -> Proof
 prove formulas = if start (splitViews formulas) S.empty == True then Valid else Invalid
     where
         -- The formula is valid if it can prove the formula is valid starting
         -- from eny clause
-        start :: Ord a => [(Set (Atomic a), [Set (Atomic a)])] -> Set (Atomic a) -> Bool
-        start formulaMatrixPair path = any (\(clause, matrix) ->
-            solve clause path matrix) $ formulaMatrixPair
+        start :: Ord a => [(Clause a, Matrix a)] -> Clause a -> Bool
+        start clauseMatrixPair path = any (\(clause, matrix) ->
+            solve clause path matrix) $
+            filter (positiveClause . fst) clauseMatrixPair
+
+        positiveClause = all (\case (Atomic _) -> True; _ -> False)
 
         solve clause path matrix =
             let newMatrix = pruneMatrix matrix path
@@ -275,8 +261,8 @@ prove formulas = if start (splitViews formulas) S.empty == True then Valid else 
         reductionRule (Atomic p) = S.member (Negated p)
         reductionRule (Negated p) = S.member (Atomic p)
 
-        -- remove clauses which contains atoms that exists in the current clause
-        pruneMatrix :: Ord a => [Set (Atomic a)] -> Set (Atomic a) -> [Set (Atomic a)]
+        -- remove clauses which contains atoms that exists in the current path
+        pruneMatrix :: Ord a => Matrix a -> Path a -> Matrix a
         pruneMatrix = foldr (\atom -> filter (S.notMember atom))
 
         -- find all clauses that clashes with p, meaning, all clauses that
