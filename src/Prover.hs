@@ -195,6 +195,12 @@ dnf _ = error "The formula is not herbrandtized"
 type Equation a = (Either (Var a) (Func a), Either (Var a) (Func a))
 type Sigma a = [Equation a]
 
+-- Tries to unify two atomic formulas. This is an attempt at a fairly efficient
+-- implimentation of a unification algorithm described here:
+-- https://en.wikipedia.org/wiki/Unification_(computer_science)#A_unification_algorithm
+-- I have made some optimizations which I think made the algorithm both more
+-- readable, as well as faster, although the implementation is not the easiest
+-- to understand regardless.
 unify :: Eq a => Atomic a -> Atomic a -> Sigma a -> Maybe (Sigma a)
 unify (Predicate x xs) (Negated y ys) sigma
     | x /= y || length xs /= length ys = Nothing
@@ -428,3 +434,6 @@ prove formulas = if start (splitViews formulas) S.empty == True then Valid else 
         closeBranch atom path matrix sigma =
             let t1@(_, reduction) = reductionRule atom path sigma
             in  if reduction then t1 else findPath atom path matrix sigma
+
+prover :: Ord a => Formula a -> Proof
+prover = prove . connectionClauses . dnf . herbrandtisize . mapInts . nnf

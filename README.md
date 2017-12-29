@@ -1,6 +1,15 @@
 # Connection Prover
 
-This is a prover for propositional formulas using the connection method.
+This is a prover for first order formulas using the connection method. This
+calculus is not complete for first order formulas, but it is complete for
+propositional formulas. It is correct though, so it will only prove valid
+formulas. It is also decidable, so it always terminates. I might make a complete
+but undecidable version of the prover sometime in the future, but it's not
+trivial how to do so, so it will have to be a future project.
+
+I have a version of this prover, that only works for propositional formulas in
+another git branch, which should be slightly faster for propositional formulas
+and easier to understand, if anyone is interested.
 
 ## Install
 
@@ -10,15 +19,8 @@ compile the project and install necessary dependencies.
 
 ## Run
 
-After compiling, run the program by typing stack exec prover-exe [args]. To run
-tests, type stack test. The args for prover-exe is an optional parameter that is
-either dnf or dcf, followed by a path to a file with the proof you want to check.
-
-dnf stands for disjunctive normal form, and is the standard normal form
-translation. dcf stands for definitional clausal form, which is a different
-kind of translation to clausal form. Different kinds of translations might be
-suited for different problems, so I have included both. If no arguments are
-given the dnf translation is chosen by default.
+After compiling, run the program by typing stack exec prover-exe <file path>.
+To run tests, type stack test.
 
 ## File format
 
@@ -28,5 +30,5 @@ the name of the formula, and formula is the formula you want to check.
 propositional variables are strings consisting of any letters or numbers, or the
 character '_'  And expressions are on the form: f1 & f2, or expressions are on
 the form f1 | f2, implication is on the form f1 -> f2 and not expressions is on
-the form ~ f. Normal precedence rules should hold, but this is not thoroughly
-tested.
+the form ~ f. for all X: f is written: ![X]: f,  and exists X: f is written:
+?[X]: f. Normal precedence rules should hold, but this is not thoroughly tested.

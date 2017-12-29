@@ -13,20 +13,14 @@ import System.Exit
 import Control.Exception hiding (try)
 import Control.Monad
 
-readArgs :: Ord a => IO (Formula a -> Proof, FilePath)
+readArgs :: IO FilePath
 readArgs = do
     progName <- getProgName
     args <- getArgs
     case args of
-        [] -> die $ "Usage: " ++ progName ++ " [dnf|dcf] <file path>"
         [fileName] -> do
-            TIO.putStrLn "Uses standard translation to disjunctive normal form"
-            return (prove . connectionClauses . dnf . mapInts . nnf, fileName)
-        [flag, fileName] -> do
-            case flag of
-                "dnf" -> return (prove . connectionClauses . dnf . mapInts . nnf, fileName)
-                "dcf" -> die "Currently unsupported"
-                _ -> do die $ "Invalid argument: " ++ flag; error ""
+            return fileName
+        _ -> die $ "Usage: " ++ progName ++ " <file path>"
 
 readFile' :: FilePath -> IO Text
 readFile' path = onException (TIO.readFile path) $ die "The file does not exist"
