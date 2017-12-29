@@ -23,10 +23,11 @@ main = do
     print fofFiles
     fofNameFomulaPairs <- mapM readFormula fofFiles
     TIO.putStrLn "----Now testing with propositional formulas----\n"
-    proofs <- checkProofs propNameFomulaPairs prover
+    propProofs <- checkProofs propNameFomulaPairs prover
+    print propProofs
     TIO.putStrLn "\n----Now testing with first order formulas----\n"
-    proofs <- checkProofs fofNameFomulaPairs prover
-    print proofs
+    fofProofs <- checkProofs fofNameFomulaPairs prover
+    print fofProofs
 
 checkProofs :: [(Text, Formula Text)] -> (Formula Text -> Proof) -> IO [Proof]
 checkProofs nameFomulaPairs prover =
