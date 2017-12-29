@@ -6,6 +6,7 @@ import Prover
 import qualified Text.Megaparsec as MP
 import Text.Megaparsec hiding (parse)
 import qualified Text.Megaparsec.Char.Lexer as L
+import Text.Megaparsec.Expr
 import Text.Megaparsec.Char
 import Text.Megaparsec.Expr
 import Data.Void
@@ -18,7 +19,7 @@ type Parser = Parsec Void Text
 expr :: Parser (Formula Text)
 expr = makeExprParser term table <?> "expression"
 
-term = parens expr <|> atomExp <?> "term"
+term = forall <|> exists <|> parens expr <|> predicate <?> "term"
 
 table = [ [prefix "~" Not],
           [binaryL "&" And],
@@ -29,6 +30,33 @@ binaryL name f = InfixL (f <$ symbol name)
 binaryR name f = InfixR (f <$ symbol name)
 prefix name f = Prefix $ foldr1 (.) <$> some (f <$ symbol name)
 
+exists :: Parser (Formula Text)
+exists = do
+    symbol "?"
+    v <- brackets var
+    symbol ":"
+    formula <- (lookAhead (symbol "~") >> expr) <|> term
+    return $ Exists v formula
+
+forall :: Parser (Formula Text)
+forall = do
+    symbol "!"
+    v <- brackets var
+    symbol ":"
+    formula <- (lookAhead (symbol "~") >> expr) <|> term
+    return $ Forall v formula
+
+predicate :: Parser (Formula Text)
+predicate = do
+    p <- prop
+    vars <- option [] $ parens $ sepBy1 funcVar comma
+    return $ Pred p $ vars
+
+lexeme :: Parser a -> Parser a
+lexeme = L.lexeme space
+
+symbol :: Text -> Parser Text
+symbol = L.symbol space
 
 parseFormula :: Parser (Text, Formula Text)
 parseFormula = do
@@ -41,25 +69,38 @@ body = do
     f <- expr
     return (name, f)
 
-lexeme :: Parser a -> Parser a
-lexeme = L.lexeme space
-
-symbol :: Text -> Parser Text
-symbol = L.symbol space
-
-atomExp :: Parser (Formula Text)
-atomExp = do
-    var <- word
-    return (Atom var) <?> "atom expression"
-
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
+
+brackets :: Parser a -> Parser a
+brackets = between (symbol "[") (symbol "]")
 
 comma :: Parser Text
 comma = symbol ","
 
 word :: Parser Text
 word = fmap T.pack $ lexeme . some $ (alphaNumChar <|> char '_')
+
+prop :: Parser Text
+prop = fmap T.pack $ lexeme $ do
+    c <- lowerChar
+    cs <- (many $ alphaNumChar <|> char '_')
+    return (c:cs)
+
+func :: Parser (Func Text)
+func = lexeme $ do
+    name <- prop
+    vars <- option [] $ parens $ sepBy1 funcVar comma
+    return $ Func name vars
+
+var :: Parser (Var Text)
+var = (fmap . fmap) T.pack $ lexeme $ do
+    c <- upperChar
+    cs <- (many $ alphaNumChar <|> char '_')
+    return $ Var (c:cs)
+
+funcVar :: Parser (Either (Var Text) (Func Text))
+funcVar = lexeme $ try $ fmap Left var <|> fmap Right func
 
 fof :: Parser Text --Start of input file
 fof = symbol "fof"

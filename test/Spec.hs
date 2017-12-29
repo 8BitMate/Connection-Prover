@@ -15,19 +15,18 @@ import Control.Monad
 main :: IO ()
 main = do
     setCurrentDirectory "prop1_problems"
-    files <- listDirectory "."
-    nameFomulaPairs <- mapM readFormula files
-    TIO.putStrLn "----Now testing with dnf----\n"
-    dnfProofs <- checkProofs nameFomulaPairs dnfProver
-    TIO.putStrLn "----Now testing with dcf----\n"
-    dcfProofs <- checkProofs nameFomulaPairs dcfProver
-    putStrLn "\n----dnfProofs----"
-    print dnfProofs
-    putStrLn "\n----dcfProofs----"
-    print dcfProofs
-    if (dnfProofs == dcfProofs)
-        then TIO.putStrLn "The provers prove the same thing"
-        else TIO.putStrLn "The provers prove different things"
+    propFiles <- fmap reverse $ listDirectory "."
+    print propFiles
+    propNameFomulaPairs <- mapM readFormula propFiles
+    setCurrentDirectory "../fof1_problems"
+    fofFiles <- fmap reverse $ listDirectory "."
+    print fofFiles
+    fofNameFomulaPairs <- mapM readFormula fofFiles
+    TIO.putStrLn "----Now testing with propositional formulas----\n"
+    proofs <- checkProofs propNameFomulaPairs prover
+    TIO.putStrLn "\n----Now testing with first order formulas----\n"
+    proofs <- checkProofs fofNameFomulaPairs prover
+    print proofs
 
 checkProofs :: [(Text, Formula Text)] -> (Formula Text -> Proof) -> IO [Proof]
 checkProofs nameFomulaPairs prover =
@@ -39,9 +38,3 @@ checkProofs nameFomulaPairs prover =
                         return Valid
             _ -> do putStrLn $ show name ++ " is not valid"
                     return Invalid) nameFomulaPairs
-
-dnfProver :: Formula Text -> Proof
-dnfProver = prove . connectionClauses . dnf . mapInts . nnf
-
-dcfProver :: Formula Text -> Proof
-dcfProver = prove . connectionClauses. dcfTranslation . mapInts . nnf
