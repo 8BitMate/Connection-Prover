@@ -19,7 +19,7 @@ compile the project and install necessary dependencies.
 
 ## Run
 
-After compiling, run the program by typing stack exec prover-exe <file path>.
+After compiling, run the program by typing stack exec prover-exe \<file path\>.
 To run tests, type stack test.
 
 ## File format
