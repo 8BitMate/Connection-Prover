@@ -15,8 +15,11 @@ and easier to understand, if anyone is interested.
 ## Install
 
 In order to compile and run this program you need to install [stack](https://docs.haskellstack.org/en/stable/install_and_upgrade/).
-After installing stack, move into the project folder and type: 'stack build' to
-compile the project and install necessary dependencies.
+After installing stack, move into the project folder and run the command:
+```
+stack build
+```
+to compile the project and install necessary dependencies.
 
 ## Run
 
