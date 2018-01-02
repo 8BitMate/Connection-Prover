@@ -24,7 +24,10 @@ After compiling, run the program by typing
 ```
 stack exec prover-exe [e|exhaustive] <file path>.
 ```
-To run tests, type stack test.
+To run tests, type
+```
+stack test
+```
 
 ## File format
 
