@@ -22,7 +22,7 @@ compile the project and install necessary dependencies.
 
 After compiling, run the program by typing
 ```
-stack exec prover-exe [e|exhaustive] <file path>.
+stack exec prover-exe [e|exhaustive] <file path>
 ```
 To run tests, type
 ```
