@@ -10,9 +10,17 @@ compile the project and install necessary dependencies.
 
 ## Run
 
-After compiling, run the program by typing stack exec prover-exe [args]. To run
-tests, type stack test. The args for prover-exe is an optional parameter that is
-either dnf or dcf, followed by a path to a file with the proof you want to check.
+After compiling, run the program by typing
+```
+stack exec prover-exe [args]
+```
+To run tests, type
+```
+stack test
+```
+The args for prover-exe is an optional parameter
+that is either dnf or dcf, followed by a path to a file with the proof you want
+to check.
 
 dnf stands for disjunctive normal form, and is the standard normal form
 translation. dcf stands for definitional clausal form, which is a different
