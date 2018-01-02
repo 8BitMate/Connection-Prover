@@ -10,7 +10,7 @@ import qualified Data.Text.IO as TIO
 
 main :: IO ()
 main = do
-    fileName <- readArgs
+    (prover, fileName) <- readArgs
     (name, formula) <- readFormula fileName
     TIO.putStrLn $ "The name of the formula is " `T.append` name
     print formula

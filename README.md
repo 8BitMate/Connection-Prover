@@ -1,11 +1,12 @@
 # Connection Prover
 
-This is a prover for first order formulas using the connection method. This
-calculus is not complete for first order formulas, but it is complete for
-propositional formulas. It is correct though, so it will only prove valid
-formulas. It is also decidable, so it always terminates. I might make a complete
-but undecidable version of the prover sometime in the future, but it's not
-trivial how to do so, so it will have to be a future project.
+This is a prover for first order formulas using the connection method. There
+is an option to use exhaustive search if a proof is not found using the
+non-exhaustive search. This will always find a proof if the formula is valid,
+but it might not terminate at all if the formula is invalid. The most likely
+reason for the program not to terminate though, is that even if a proof can
+theoretically be found, it may take too much time for any person to be
+patient enough to wait for it to finish.
 
 I have a version of this prover, that only works for propositional formulas in
 another git branch, which should be slightly faster for propositional formulas
@@ -19,7 +20,10 @@ compile the project and install necessary dependencies.
 
 ## Run
 
-After compiling, run the program by typing stack exec prover-exe \<file path\>.
+After compiling, run the program by typing
+```
+stack exec prover-exe [e|exhaustive] <file path>.
+```
 To run tests, type stack test.
 
 ## File format

@@ -138,7 +138,7 @@ mapInts f = evalState (go M.empty f) (0, M.empty)
 -- extracted to the front of the formula without changing the structure of the
 -- formula; We do not remove any important information by removing them.
 herbrandtisize :: Formula Int -> Formula Int
-herbrandtisize f = evalState (go S.empty M.empty f) (findMax f)
+herbrandtisize f = evalState (go S.empty M.empty f) (findMax f + 1)
     where
         go :: Set (Var Int) -- Existentially quantified variables
            -> Map (Var Int) (Func Int) -- Maps every Universially quantified variable to a unique function
@@ -166,8 +166,8 @@ herbrandtisize f = evalState (go S.empty M.empty f) (findMax f)
 findMax :: Formula Int -> Int
 findMax (Pred n xs) = max n $ findMax' xs
     where
-        findMax' = foldr (\case Left (Var x) -> max x
-                                Right (Func f xs) -> max (max f $ findMax' xs)) 0
+        findMax' = foldl' (flip (\case Left (Var x) -> max x
+                                       Right (Func f xs) -> max (max f $ findMax' xs))) 0
 findMax (Not f) = findMax f
 findMax (f1 `And` f2) = max (findMax f1) (findMax f2)
 findMax (f1 `Or` f2) = max (findMax f1) (findMax f2)
@@ -372,6 +372,17 @@ notNegatedMember :: Ord a => Atomic a -> Clause a -> Bool
 notNegatedMember p = (== S.empty) . negatedMembers p
 {-# INLINE notNegatedMember #-}
 
+prover :: Ord a => Formula a -> Proof
+prover = prove . connectionClauses . dnf . herbrandtisize . mapInts . nnf
+
+exhaustiveProver :: Ord a => Formula a -> Proof
+exhaustiveProver = proveExhaustive . connectionClauses . dnf . herbrandtisize . mapInts . nnf
+
+-- This prover is not complete, but it always terminates. It will most
+-- importantly not copy any clauses, which is necessary for a complete search
+-- The main advantage in addition to being decidable, is that it is usually
+-- faster than doing a complete search, so it will find proofs which a complete
+-- prover might not find in any reasonable amount of time.
 prove :: Ord a => Matrix a -> Proof
 prove formulas = if start (splitViews formulas) S.empty == True then Valid else Invalid
     where
@@ -387,7 +398,7 @@ prove formulas = if start (splitViews formulas) S.empty == True then Valid else 
 
         -- remove clauses which contains atoms that exists in the current path
         pruneMatrix :: Ord a => Matrix a -> Path a -> Matrix a
-        pruneMatrix = foldr (\atom -> filter (notMember atom))
+        pruneMatrix = foldr (\atom -> filter (S.notMember atom))
 
         -- find all clauses that clashes with p, meaning, all clauses that
         -- contain the compliment of p. Returns a list of pairs containing
@@ -424,9 +435,8 @@ prove formulas = if start (splitViews formulas) S.empty == True then Valid else 
                 go ((clause, matrix):clashes) =
                     let neg = S.findMin $ negatedMembers atom clause
                         unifier = unify atom neg sigma
-                        newClause = S.delete neg clause
                         newPath = S.insert atom path
-                    in  maybe (go clashes) (\sigma' -> solve newClause newPath matrix sigma') unifier
+                    in  maybe (go clashes) (\sigma' -> solve clause newPath matrix sigma') unifier
 
         -- A branch can be closed if it can apply the reduction rule, or find
         -- a path that closes the formula
@@ -435,5 +445,108 @@ prove formulas = if start (splitViews formulas) S.empty == True then Valid else 
             let t1@(_, reduction) = reductionRule atom path sigma
             in  if reduction then t1 else findPath atom path matrix sigma
 
-prover :: Ord a => Formula a -> Proof
-prover = prove . connectionClauses . dnf . herbrandtisize . mapInts . nnf
+-- This prover is as far as I can tell from my testing, a complete prover for
+-- first order logic. It is semi-decidable, and will thus be able to prove the
+-- validiy of any valid formula, but might not ever terminate if the formula
+-- is invalid, although it would probably terminate in most cases, this can not
+-- be guaranteed.
+proveExhaustive :: Matrix Int -> Proof
+proveExhaustive formulas =
+    if start (splitViews formulas) S.empty (findMaxInMatrix formulas + 1) == True then Valid else Invalid
+    where
+        -- The formula is valid if it can prove the formula is valid starting
+        -- from any positive clause
+        start :: [(Clause Int, Matrix Int)] -> Path Int -> Int -> Bool
+        start clauseMatrixPair path maxValue =
+            any (\(clause, matrix) ->
+            (\(_, _, result) -> result) $ evalState (solve clause path matrix []) maxValue) $
+            filter (positiveClause . fst) clauseMatrixPair
+
+        positiveClause :: Clause Int -> Bool
+        positiveClause = all (\case (Predicate _ _) -> True; _ -> False)
+
+        -- find all clauses that clashes with p, meaning, all clauses that
+        -- contain the compliment of p. Returns a list of pairs containing
+        -- a clashing clause, and all other unvisited clauses. It also ignores
+        -- all clauses which has an atom which exists in the current path
+        findClashingClauses :: Atomic Int -> Path Int -> Matrix Int -> [(Clause Int, Matrix Int)]
+        findClashingClauses atom path = filter (\(clause, _) ->
+            negatedMember atom clause && all (flip S.notMember path) clause) . splitViews
+
+        solve :: Clause Int -> Path Int -> Matrix Int -> Sigma Int -> State Int (Matrix Int, Sigma Int, Bool)
+        solve clause path matrix sigma = do
+            oldVar <- get
+            copy <- copyClause clause
+            newVar <- get
+            let newMatrix =
+                    if oldVar == newVar -- clause == copy
+                    then matrix
+                    else matrix ++ [copy]
+            go newMatrix sigma $ toList clause
+            where
+                go currentMatrix currentSigma [] = return (clause:currentMatrix, currentSigma, True)
+                go currentMatrix currentSigma (atom:currentClause) = do
+                    (newMatrix, newSigma, closed) <- closeBranch atom path currentMatrix currentSigma
+                    if closed then go newMatrix newSigma currentClause else return (clause:matrix, sigma, False)
+
+
+        -- If the compliment of p exists in the path, then we can close that branch
+        reductionRule :: Atomic Int -> Path Int -> Sigma Int -> (Sigma Int, Bool)
+        reductionRule atom path sigma
+            | negatedMember atom path =
+                let unifier =  (\neg -> unify atom neg sigma)
+                               . S.findMin $ negatedMembers atom path
+                in maybe (sigma, False) (\sigma' -> (sigma', True)) unifier
+            | otherwise = (sigma, False)
+
+
+        -- Returns true and a new unifier if it can close any branch starting starting from atom
+        findPath :: Atomic Int -> Path Int -> Matrix Int -> Sigma Int -> State Int (Matrix Int, Sigma Int, Bool)
+        findPath atom path matrix sigma = go $ findClashingClauses atom path matrix
+            where
+                go [] = return (matrix, sigma, False)
+                go ((clause, matrix):clashes) = do
+                    let neg = S.findMin $ negatedMembers atom clause
+                        unifier = unify atom neg sigma
+                        newPath = S.insert atom path
+                    maybe (go clashes) (\sigma' -> do
+                        (newMatrix, newSigma, foundPath) <- solve clause newPath matrix sigma'
+                        if foundPath
+                            then return (newMatrix, sigma', foundPath)
+                            else go clashes) unifier
+
+        -- A branch can be closed if it can apply the reduction rule, or find
+        -- a path that closes the formula
+        closeBranch :: Atomic Int -> Path Int -> Matrix Int -> Sigma Int -> State Int (Matrix Int, Sigma Int, Bool)
+        closeBranch atom path matrix sigma =
+            let (sigma', reduction) = reductionRule atom path sigma
+            in  if reduction then return (matrix, sigma', reduction) else findPath atom path matrix sigma
+
+copyClause :: Clause Int -> State Int (Clause Int)
+copyClause clause = do
+    oldVar <- get
+    let (copy, (newVar, _)) = runState (foldM (flip
+            (\case (Predicate p xs) -> \clause ->
+                        flip S.insert clause <$> Predicate p <$> (copyList xs)
+                   (Negated p xs) -> \clause ->
+                        flip S.insert clause <$> Negated p <$> (copyList xs))) S.empty clause) (oldVar, M.empty)
+    put newVar
+    return copy
+    where
+        copyList :: [Either (Var Int) (Func Int)] -> State (Int, Map Int (Var Int)) [(Either (Var Int) (Func Int))]
+        copyList = mapM
+            (\case (Left (Var v)) -> do
+                        (varNum, vars) <- get
+                        case M.lookup v vars of
+                            Nothing -> do
+                                put (varNum + 1, M.insert v (Var varNum) vars)
+                                return $ Left (Var varNum)
+                            Just var -> return $ Left var
+                   (Right (Func f fs)) -> Right . Func f <$> (copyList fs))
+
+findMaxInMatrix :: Matrix Int -> Int
+findMaxInMatrix = foldl' (foldl' (flip (\case (Predicate p xs) -> max (max p $ findMax' xs)
+                                              (Negated p xs) -> max (max p $ findMax' xs)))) 0
+    where
+        findMax' = foldl' (flip (\case Left (Var x) -> max x
+                                       Right (Func f xs) -> max (max f $ findMax' xs))) 0

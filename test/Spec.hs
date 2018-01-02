@@ -28,6 +28,9 @@ main = do
     TIO.putStrLn "\n----Now testing with first order formulas----\n"
     fofProofs <- checkProofs fofNameFomulaPairs prover
     print fofProofs
+    TIO.putStrLn "\n----Now testing with first order formulas using exhaustive search----\n"
+    fofExhaustiveProofs <- checkProofs fofNameFomulaPairs exhaustiveProver
+    print fofExhaustiveProofs
 
 checkProofs :: [(Text, Formula Text)] -> (Formula Text -> Proof) -> IO [Proof]
 checkProofs nameFomulaPairs prover =
