@@ -2,7 +2,6 @@
 
 module Prover where
 
-import Prelude hiding (lookup)
 import Data.Map (Map (..))
 import qualified Data.Map as M
 import Data.Set (Set (..))
@@ -59,19 +58,10 @@ mapInts f = evalState (go f) (0, M.empty)
                 Nothing -> do put (var + 1, M.insert p var table)
                               return $ Atom var
                 Just var -> return $ Atom var
-        go (Not f1) = do f1' <- go f1; return $ Not f1'
-        go (f1 `And` f2) = do
-            f1' <- go f1
-            f2' <- go f2
-            return (f1' `And` f2')
-        go (f1 `Or` f2) = do
-            f1' <- go f1
-            f2' <- go f2
-            return (f1' `Or` f2')
-        go (f1 `Implies` f2) = do
-            f1' <- go f1
-            f2' <- go f2
-            return (f1' `Implies` f2')
+        go (Not f1) = Not <$> go f1
+        go (f1 `And` f2) = liftM2 And (go f1) (go f2)
+        go (f1 `Or` f2) = liftM2 Or (go f1) (go f2)
+        go (f1 `Implies` f2) = liftM2 Implies (go f1) (go f2)
 
 findMaxInt :: Formula Int -> Int
 findMaxInt (Atom n) = n
@@ -87,7 +77,7 @@ getNewVar = do (var, _) <- modify' (\(var, set) -> (var + 1, set)) >> get
                return var
 
 getDCFSet :: State (Int, [Formula Int]) [Formula Int]
-getDCFSet = gets (\(_, set) -> set)
+getDCFSet = gets snd
 
 putDCFSet :: [Formula Int] -> State (Int, [Formula Int]) ()
 putDCFSet set = modify' (\(var, _) -> (var, set))
@@ -180,7 +170,7 @@ type Matrix a = [Clause a]
 -- clauses are of the form mentioned above, the resulting value is [], since the
 -- formula is unsatisfiable; otherwise the return value is a normal list.
 connectionClauses :: Ord a => Formula a -> Matrix a
-connectionClauses f = sortOn length . rmdups . evalState (finally f) $ (Just S.empty)
+connectionClauses f = sortOn length . rmdups . evalState (finally f) $ Just S.empty
     where
         go :: Ord a => Formula a -> State (Maybe (Clause a)) (Matrix a -> Matrix a)
         go (Atom p) = do
@@ -199,19 +189,18 @@ connectionClauses f = sortOn length . rmdups . evalState (finally f) $ (Just S.e
                     if S.member (Atomic p) set then put Nothing >> return id
                     else modify' (fmap (S.insert (Negated p))) >> return id
 
-        go (f1 `And` f2) = do
-            go f2 >> go f1
+        go (f1 `And` f2) = go f2 >> go f1
 
         go (f1 `Or` f2) = do
             put (Just S.empty)
             sets2 <- go f2
             maybeSet2 <- get
-            let set2 = maybe id (\set -> (set:)) maybeSet2
+            let set2 = maybe id (:) maybeSet2
 
             put (Just S.empty)
             sets1 <- go f1
             maybeSet1 <- get
-            let set1 = maybe id (\set -> (set:)) maybeSet1
+            let set1 = maybe id (:) maybeSet1
 
             put Nothing
             return (set1 . sets1 . set2 . sets2)
@@ -222,7 +211,7 @@ connectionClauses f = sortOn length . rmdups . evalState (finally f) $ (Just S.e
         finally formula = do
             sets <- go formula
             maybeSet <- get
-            return $ maybe sets (\set -> (set:) . sets) maybeSet $ []
+            return $ maybe sets (\set -> (set:) . sets) maybeSet []
 
 -- remove duplicate elements
 -- essentially the same function as Nikita Volkov's answer on stack overflow
@@ -239,10 +228,10 @@ rmdups = go S.empty
 -- Example: splitViews [1,2,3] = [(1,[2,3]), (2,[1,3]), (3,[1,2])]
 splitViews :: [a] -> [(a, [a])]
 splitViews [] = []
-splitViews (x:xs) = (x, xs) : ((fmap . fmap) (x:) $ splitViews xs)
+splitViews (x:xs) = (x, xs) : (fmap . fmap) (x:) (splitViews xs)
 
 prove :: Ord a => Matrix a -> Proof
-prove formulas = if start (splitViews formulas) S.empty == True then Valid else Invalid
+prove formulas = if start (splitViews formulas) S.empty then Valid else Invalid
     where
         -- The formula is valid if it can prove the formula is valid starting
         -- from eny clause
@@ -263,7 +252,7 @@ prove formulas = if start (splitViews formulas) S.empty == True then Valid else 
 
         -- remove clauses which contains atoms that exists in the current path
         pruneMatrix :: Ord a => Matrix a -> Path a -> Matrix a
-        pruneMatrix = foldr (\atom -> filter (S.notMember atom))
+        pruneMatrix = foldr (filter . S.notMember)
 
         -- find all clauses that clashes with p, meaning, all clauses that
         -- contain the compliment of p. Returns a list of pairs containing
@@ -275,7 +264,7 @@ prove formulas = if start (splitViews formulas) S.empty == True then Valid else 
 
         -- Returns true if it can close any branch starting starting from atom
         findPath atom path =
-            let newPath = (S.insert atom path)
+            let newPath = S.insert atom path
             in  any (\(clause, matrix) ->
                 solve clause newPath matrix) . findClashingClauses atom
 

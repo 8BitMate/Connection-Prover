@@ -4,7 +4,7 @@ module Parser where
 
 import Prover
 import qualified Text.Megaparsec as MP
-import Text.Megaparsec hiding (parse)
+import Text.Megaparsec
 import qualified Text.Megaparsec.Char.Lexer as L
 import Text.Megaparsec.Char
 import Text.Megaparsec.Expr

@@ -3,11 +3,11 @@ module Tests where
 import Prover
 
 testFormula1 = Not (Not (Atom 'a' `And` Atom 'b' `And` Atom 'c') `And` Not (Not (Atom 'a' `And` Not (Not (Atom 'a' `And` Atom 'c')))))-- ~ (~ (a & b & c) & ~ ~ (a & ~ ~ (b & c)))
-testFormula2 = (Atom 'a' `And` ((Atom 'b' `And` (Atom 'c' `And` Atom 'd')) `And` (Atom 'e' `And` (Atom 'f' `And` Atom 'g'))))
-testFormula3 = (Atom 'a' `And` Atom 'b' `And` Atom 'c') `Or` (Not (Atom 'a') `Or` (Not (Atom 'a') `Or` (Not (Atom 'c'))))
-testCNF1 = (((Atom 'a' `And` (Atom 'b' `Or` Atom 'c')) `And` (Atom 'a' `Or` (Atom 'p' `And` Atom 'q'))) `And` (Atom 'p' `Or` Atom 'r'))
-testCNF2 = (((Atom 'a' `And` (Atom 'b' `Or` Atom 'c')) `And` ((Atom 'p' `And` Atom 'q') `Or` Atom 'a')) `And` (Atom 'p' `Or` Atom 'r'))
-testCNF3 = (((Atom 'a' `And` (Atom 'b' `Or` Atom 'c')) `And` (Atom 'p' `Or` (Atom 'q' `Or` Atom 'a'))) `And` (Atom 'p' `Or` Atom 'r'))
+testFormula2 = Atom 'a' `And` ((Atom 'b' `And` (Atom 'c' `And` Atom 'd')) `And` (Atom 'e' `And` (Atom 'f' `And` Atom 'g')))
+testFormula3 = (Atom 'a' `And` Atom 'b' `And` Atom 'c') `Or` (Not (Atom 'a') `Or` (Not (Atom 'a') `Or` Not (Atom 'c')))
+testCNF1 = ((Atom 'a' `And` (Atom 'b' `Or` Atom 'c')) `And` (Atom 'a' `Or` (Atom 'p' `And` Atom 'q'))) `And` (Atom 'p' `Or` Atom 'r')
+testCNF2 = ((Atom 'a' `And` (Atom 'b' `Or` Atom 'c')) `And` ((Atom 'p' `And` Atom 'q') `Or` Atom 'a')) `And` (Atom 'p' `Or` Atom 'r')
+testCNF3 = ((Atom 'a' `And` (Atom 'b' `Or` Atom 'c')) `And` (Atom 'p' `Or` (Atom 'q' `Or` Atom 'a'))) `And` (Atom 'p' `Or` Atom 'r')
 testDCFTrans1 = (Atom 'p' `Or` Atom 'q') `And` (Atom 'q' `Or` Atom 'r') `And` (Atom 'r' `Or` Atom 's')
 testDCFTrans2 = (Atom 'p' `Or` Atom 'q') `And` ((Atom 'q' `Or` Atom 'r') `And` (Atom 'r' `Or` Atom 's'))
 testDCFTrans3 = (Atom 'p' `Or` Atom 'q') `And` ((Atom 'q' `Or` Atom 'r' `Or` Atom 's') `And` (Atom 'r' `Or` Atom 's'))
