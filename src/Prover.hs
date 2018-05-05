@@ -2,7 +2,6 @@
 
 module Prover where
 
-import Prelude hiding (lookup)
 import Data.Map (Map (..))
 import qualified Data.Map as M
 import Data.Set (Set (..))
@@ -159,7 +158,7 @@ herbrandtisize f = evalState (go S.empty M.empty f) (findMax f + 1)
         replaceVarOrFunc :: Map (Var Int) (Func Int)
                          -> Either (Var Int) (Func Int)
                          -> State Int (Either (Var Int) (Func Int))
-        replaceVarOrFunc funcs var@(Left v) = maybe (return var) (return . Right) $ M.lookup v funcs
+        replaceVarOrFunc funcs var@(Left v) = return . maybe var Right $ M.lookup v funcs
         replaceVarOrFunc funcs (Right (Func f xs)) =
             Right . Func f <$> mapM (replaceVarOrFunc funcs) xs
 
@@ -205,11 +204,11 @@ unify :: Eq a => Atomic a -> Atomic a -> Sigma a -> Maybe (Sigma a)
 unify (Predicate x xs) (Negated y ys) sigma
     | x /= y || length xs /= length ys = Nothing
     | null xs && null ys = Just sigma -- Just a check for speedup
-    | otherwise = unify' $ (zip xs ys) ++ sigma
+    | otherwise = unify' $ zip xs ys ++ sigma
 unify (Negated x xs) (Predicate y ys) sigma
     | x /= y || length xs /= length ys = Nothing
     | null xs && null ys = Just sigma -- Just a check for speedup
-    | otherwise = unify' $ (zip xs ys) ++ sigma
+    | otherwise = unify' $ zip xs ys ++ sigma
 unify _ _ _ = Nothing
 
 unify' :: Eq a => Sigma a -> Maybe (Sigma a)
@@ -217,13 +216,13 @@ unify' sigma =
     let go1 [] = Just ([], [])
         go1 (pair@(Left v@(Var x), t@(Left (Var y))):rest)
             | x == y = go1 rest
-            | otherwise = go2 pair =<< (go1 $ replace v t rest)
+            | otherwise = go2 pair =<< go1 (replace v t rest)
         go1 (pair@(Left v, t@(Right _)):rest)
             | occurs v t = Nothing
-            | otherwise = go2 pair =<< (go1 $ replace v t rest)
+            | otherwise = go2 pair =<< go1 (replace v t rest)
         go1 ((t@(Right _), Left v):rest)
             | occurs v t = Nothing
-            | otherwise = go2 (Left v, t) =<< (go1 $ replace v t rest)
+            | otherwise = go2 (Left v, t) =<< go1 (replace v t rest)
         go1 (pair:rest) = go2 pair =<< go1 rest
 
         go2 pair (sigma, subs) = case foldl' go2' pair subs of
@@ -236,11 +235,11 @@ unify' sigma =
     in  fst <$> go1 sigma >>= decompose
 
 
-occurs :: Eq a => (Var a) -> Either (Var a) (Func a) -> Bool
+occurs :: Eq a => Var a -> Either (Var a) (Func a) -> Bool
 occurs v (Right (Func f fs)) = any (occurs v) fs
 occurs v (Left v') = v == v'
 
-replace :: Eq a => (Var a) -> Either (Var a) (Func a) -> Sigma a -> Sigma a
+replace :: Eq a => Var a -> Either (Var a) (Func a) -> Sigma a -> Sigma a
 replace v t sigma =
     let fstHalf = map (replace' v t . fst) sigma
         sndHalf = map (replace' v t . snd) sigma
@@ -264,7 +263,7 @@ decompose sigma =
                    | null rest -> return s
                    | otherwise -> unify' (s ++ rest)
 
--- Extract the first occurance of anything that satisfies the pradicate, if any.
+-- Extract the first occurance of anything that satisfies the predicate, if any.
 viewBy :: (a -> Bool) -> [a] -> Maybe (a, [a])
 viewBy f [] = Nothing
 viewBy f (x:xs)
@@ -282,7 +281,7 @@ type Matrix a = [Clause a]
 -- clauses are of the form mentioned above, the resulting value is [], since the
 -- formula is unsatisfiable; otherwise the return value is a normal list.
 connectionClauses :: Ord a => Formula a -> Matrix a
-connectionClauses f = sortOn length . rmdups . evalState (finally f) $ (Just S.empty)
+connectionClauses f = sortOn length . rmdups . evalState (finally f) $ Just S.empty
     where
         go :: Ord a => Formula a -> State (Maybe (Clause a)) (Matrix a -> Matrix a)
         go (Pred p xs) = do
@@ -307,12 +306,12 @@ connectionClauses f = sortOn length . rmdups . evalState (finally f) $ (Just S.e
             put (Just S.empty)
             sets2 <- go f2
             maybeSet2 <- get
-            let set2 = maybe id (\set -> (set:)) maybeSet2
+            let set2 = maybe id (:) maybeSet2
 
             put (Just S.empty)
             sets1 <- go f1
             maybeSet1 <- get
-            let set1 = maybe id (\set -> (set:)) maybeSet1
+            let set1 = maybe id (:) maybeSet1
 
             put Nothing
             return (set1 . sets1 . set2 . sets2)
@@ -323,7 +322,7 @@ connectionClauses f = sortOn length . rmdups . evalState (finally f) $ (Just S.e
         finally formula = do
             sets <- go formula
             maybeSet <- get
-            return $ maybe sets (\set -> (set:) . sets) maybeSet $ []
+            return $ maybe sets (\set -> (set:) . sets) maybeSet []
 
 -- remove duplicate elements
 -- essentially the same function as Nikita Volkov's answer on stack overflow
@@ -340,7 +339,7 @@ rmdups = go S.empty
 -- Example: splitViews [1,2,3] = [(1,[2,3]), (2,[1,3]), (3,[1,2])]
 splitViews :: [a] -> [(a, [a])]
 splitViews [] = []
-splitViews (x:xs) = (x, xs) : ((fmap . fmap) (x:) $ splitViews xs)
+splitViews (x:xs) = (x, xs) : (fmap . fmap) (x:) (splitViews xs)
 
 -- Efficient way of finding all Predicates or Negated atoms with name p
 members :: Ord a => Atomic a -> Clause a -> Clause a
@@ -384,7 +383,7 @@ exhaustiveProver = proveExhaustive . connectionClauses . dnf . herbrandtisize . 
 -- faster than doing a complete search, so it will find proofs which a complete
 -- prover might not find in any reasonable amount of time.
 prove :: Ord a => Matrix a -> Proof
-prove formulas = if start (splitViews formulas) S.empty == True then Valid else Invalid
+prove formulas = if start (splitViews formulas) S.empty then Valid else Invalid
     where
         -- The formula is valid if it can prove the formula is valid starting
         -- from any positive clause
@@ -398,7 +397,7 @@ prove formulas = if start (splitViews formulas) S.empty == True then Valid else 
 
         -- remove clauses which contains atoms that exists in the current path
         pruneMatrix :: Ord a => Matrix a -> Path a -> Matrix a
-        pruneMatrix = foldr (\atom -> filter (S.notMember atom))
+        pruneMatrix = foldr (filter . S.notMember)
 
         -- find all clauses that clashes with p, meaning, all clauses that
         -- contain the compliment of p. Returns a list of pairs containing
@@ -436,7 +435,7 @@ prove formulas = if start (splitViews formulas) S.empty == True then Valid else 
                     let neg = S.findMin $ negatedMembers atom clause
                         unifier = unify atom neg sigma
                         newPath = S.insert atom path
-                    in  maybe (go clashes) (\sigma' -> solve clause newPath matrix sigma') unifier
+                    in  maybe (go clashes) (solve clause newPath matrix) unifier
 
         -- A branch can be closed if it can apply the reduction rule, or find
         -- a path that closes the formula
@@ -452,7 +451,7 @@ prove formulas = if start (splitViews formulas) S.empty == True then Valid else 
 -- be guaranteed.
 proveExhaustive :: Matrix Int -> Proof
 proveExhaustive formulas =
-    if start (splitViews formulas) S.empty (findMaxInMatrix formulas + 1) == True then Valid else Invalid
+    if start (splitViews formulas) S.empty (findMaxInMatrix formulas + 1) then Valid else Invalid
     where
         -- The formula is valid if it can prove the formula is valid starting
         -- from any positive clause
@@ -471,7 +470,7 @@ proveExhaustive formulas =
         -- all clauses which has an atom which exists in the current path
         findClashingClauses :: Atomic Int -> Path Int -> Matrix Int -> [(Clause Int, Matrix Int)]
         findClashingClauses atom path = filter (\(clause, _) ->
-            negatedMember atom clause && all (flip S.notMember path) clause) . splitViews
+            negatedMember atom clause && all (`S.notMember` path) clause) . splitViews
 
         solve :: Clause Int -> Path Int -> Matrix Int -> Sigma Int -> State Int (Matrix Int, Sigma Int, Bool)
         solve clause path matrix sigma = do
@@ -527,13 +526,13 @@ copyClause clause = do
     oldVar <- get
     let (copy, (newVar, _)) = runState (foldM (flip
             (\case (Predicate p xs) -> \clause ->
-                        flip S.insert clause <$> Predicate p <$> (copyList xs)
+                        flip S.insert clause . Predicate p <$> copyList xs
                    (Negated p xs) -> \clause ->
-                        flip S.insert clause <$> Negated p <$> (copyList xs))) S.empty clause) (oldVar, M.empty)
+                        flip S.insert clause . Negated p <$> copyList xs)) S.empty clause) (oldVar, M.empty)
     put newVar
     return copy
     where
-        copyList :: [Either (Var Int) (Func Int)] -> State (Int, Map Int (Var Int)) [(Either (Var Int) (Func Int))]
+        copyList :: [Either (Var Int) (Func Int)] -> State (Int, Map Int (Var Int)) [Either (Var Int) (Func Int)]
         copyList = mapM
             (\case (Left (Var v)) -> do
                         (varNum, vars) <- get
@@ -542,7 +541,7 @@ copyClause clause = do
                                 put (varNum + 1, M.insert v (Var varNum) vars)
                                 return $ Left (Var varNum)
                             Just var -> return $ Left var
-                   (Right (Func f fs)) -> Right . Func f <$> (copyList fs))
+                   (Right (Func f fs)) -> Right . Func f <$> copyList fs)
 
 findMaxInMatrix :: Matrix Int -> Int
 findMaxInMatrix = foldl' (foldl' (flip (\case (Predicate p xs) -> max (max p $ findMax' xs)

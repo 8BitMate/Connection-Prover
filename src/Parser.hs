@@ -4,9 +4,8 @@ module Parser where
 
 import Prover
 import qualified Text.Megaparsec as MP
-import Text.Megaparsec hiding (parse)
+import Text.Megaparsec
 import qualified Text.Megaparsec.Char.Lexer as L
-import Text.Megaparsec.Expr
 import Text.Megaparsec.Char
 import Text.Megaparsec.Expr
 import Data.Void
@@ -50,7 +49,7 @@ predicate :: Parser (Formula Text)
 predicate = do
     p <- prop
     vars <- option [] $ parens $ sepBy1 funcVar comma
-    return $ Pred p $ vars
+    return $ Pred p vars
 
 lexeme :: Parser a -> Parser a
 lexeme = L.lexeme space
@@ -59,8 +58,7 @@ symbol :: Text -> Parser Text
 symbol = L.symbol space
 
 parseFormula :: Parser (Text, Formula Text)
-parseFormula = do
-    fof >> parens body
+parseFormula = fof >> parens body
 
 body :: Parser (Text, Formula Text)
 body = do
@@ -84,7 +82,7 @@ word = fmap T.pack $ lexeme . some $ (alphaNumChar <|> char '_')
 prop :: Parser Text
 prop = fmap T.pack $ lexeme $ do
     c <- lowerChar
-    cs <- (many $ alphaNumChar <|> char '_')
+    cs <- many $ alphaNumChar <|> char '_'
     return (c:cs)
 
 func :: Parser (Func Text)
@@ -96,7 +94,7 @@ func = lexeme $ do
 var :: Parser (Var Text)
 var = (fmap . fmap) T.pack $ lexeme $ do
     c <- upperChar
-    cs <- (many $ alphaNumChar <|> char '_')
+    cs <- many $ alphaNumChar <|> char '_'
     return $ Var (c:cs)
 
 funcVar :: Parser (Either (Var Text) (Func Text))

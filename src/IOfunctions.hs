@@ -10,7 +10,7 @@ import qualified Data.Text.IO as TIO
 import System.Environment
 import System.IO
 import System.Exit
-import Control.Exception hiding (try)
+import Control.Exception
 import Control.Monad
 
 readArgs :: IO (Formula Text -> Proof, FilePath)
@@ -21,7 +21,7 @@ readArgs = do
         [fileName] -> do
             TIO.putStrLn "Using default non exhaustive search"
             return (prover, fileName)
-        [arg, fileName] -> do
+        [arg, fileName] ->
             case arg of
                 "e" -> return (exhaustiveProver', fileName)
                 "exhaustive" -> return (exhaustiveProver', fileName)
@@ -35,7 +35,7 @@ readFormula :: FilePath -> IO (Text, Formula Text)
 readFormula path = do
     contents <- readFile' path
     case parse parseFormula path contents of
-        Left err -> do putStrLn (show err); die "unexpected parse error"; error ""
+        Left err -> do print err; die "unexpected parse error"; error ""
         Right formula -> return  formula
 
 exhaustiveProver' :: Ord a => Formula a -> Proof
