@@ -31,8 +31,7 @@ prefix name f = Prefix $ foldr1 (.) <$> some (f <$ symbol name)
 
 
 parseFormula :: Parser (Text, Formula Text)
-parseFormula = do
-    fof >> parens body
+parseFormula = fof >> parens body
 
 body :: Parser (Text, Formula Text)
 body = do
